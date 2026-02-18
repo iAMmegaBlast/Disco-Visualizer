@@ -298,8 +298,9 @@ function loadAudioFile(file) {
     audio.src = currentAudioUrl;
     audio.load();
     ui.playBtn.disabled = false;
-    setStatus(`Loaded: ${file.name}. Click Play.`);
-    ui.dropZone.style.display = 'none';
+    setStatus(`Loaded ${file.name}`);
+    setDropVisible(false);
+    setDropActive(false);
   } catch (err) {
     setStatus(`Load error: ${err.message}`);
   }
@@ -504,27 +505,56 @@ function setDropVisible(visible) {
   ui.dropZone.classList.toggle('visible', visible);
 }
 
+function hasFilePayload(e) {
+  const types = e?.dataTransfer?.types;
+  if (!types) return false;
+  return Array.from(types).includes('Files');
+}
+
 function getFileFromDrop(dataTransfer) {
   if (!dataTransfer) return null;
+
+  if (dataTransfer.items && dataTransfer.items.length > 0) {
+    for (const item of dataTransfer.items) {
+      if (item.kind === 'file') {
+        const file = item.getAsFile();
+        if (file) return file;
+      }
+    }
+  }
+
   return dataTransfer.files?.[0] || null;
 }
 
-window.addEventListener('dragenter', (e) => {
+function addGlobalDndListener(eventName, handler) {
+  window.addEventListener(eventName, handler, false);
+  document.addEventListener(eventName, handler, false);
+}
+
+addGlobalDndListener('dragenter', (e) => {
+  if (!hasFilePayload(e)) return;
   e.preventDefault();
+  e.stopPropagation();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+
   dragDepth += 1;
   setDropVisible(true);
   setDropActive(true);
+  setStatus('Drag detected');
 });
 
-window.addEventListener('dragover', (e) => {
+addGlobalDndListener('dragover', (e) => {
+  if (!hasFilePayload(e)) return;
   e.preventDefault();
+  e.stopPropagation();
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+
   setDropVisible(true);
   setDropActive(true);
 });
 
-window.addEventListener('dragleave', (e) => {
-  e.preventDefault();
+addGlobalDndListener('dragleave', (e) => {
+  if (!hasFilePayload(e)) return;
   dragDepth = Math.max(0, dragDepth - 1);
   if (dragDepth === 0) {
     setDropActive(false);
@@ -532,15 +562,30 @@ window.addEventListener('dragleave', (e) => {
   }
 });
 
-window.addEventListener('drop', (e) => {
+addGlobalDndListener('drop', (e) => {
   e.preventDefault();
+  e.stopPropagation();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+
   dragDepth = 0;
   setDropActive(false);
   setDropVisible(false);
+  setStatus('Drop detected');
+
   const file = getFileFromDrop(e.dataTransfer);
+  if (!file) {
+    setStatus('Drop detected but no file found');
+    return;
+  }
+  if (!file.type || !file.type.startsWith('audio/')) {
+    setStatus('Not an audio file');
+    return;
+  }
   loadAudioFile(file);
 });
 
+// Beginner-friendly default: show loader until audio is loaded.
+setDropVisible(true);
 ui.dropZone.addEventListener('click', () => ui.fileInput.click());
 ui.fileInput.addEventListener('change', () => {
   const file = ui.fileInput.files?.[0];
