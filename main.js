@@ -255,9 +255,6 @@ const intersectionPoints = new THREE.Points(intersectionGeo, intersectionMat);
 intersectionPoints.position.set(0, 0, -5.2);
 scene.add(intersectionPoints);
 
-updateDotPalette();
-updateLaserPalette();
-
 
 const tempColor = new THREE.Color();
 const temp2A = new THREE.Vector2();
@@ -342,7 +339,8 @@ function updateLaserPalette() {
   }
 }
 
-
+updateDotPalette();
+updateLaserPalette();
 
 async function toggleFullscreen() {
   try {
