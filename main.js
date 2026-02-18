@@ -7,6 +7,7 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 const app = document.getElementById('app');
 
 const ui = {
+  panel: document.getElementById('ui'),
   dropZone: document.getElementById('dropZone'),
   fileInput: document.getElementById('fileInput'),
   playBtn: document.getElementById('playBtn'),
@@ -55,12 +56,12 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.toneMappingExposure = 0.95;
 app.appendChild(renderer.domElement);
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.15, 0.5, 0.55);
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.95, 0.48, 0.62);
 composer.addPass(bloomPass);
 
 const chromaPass = new ShaderPass({
@@ -80,7 +81,7 @@ const chromaPass = new ShaderPass({
     uniform float amount;
     varying vec2 vUv;
     void main() {
-      vec2 shift = amount * vec2(0.004, 0.003);
+      vec2 shift = amount * vec2(0.003, 0.002);
       float r = texture2D(tDiffuse, vUv + shift).r;
       float g = texture2D(tDiffuse, vUv).g;
       float b = texture2D(tDiffuse, vUv - shift).b;
@@ -90,14 +91,14 @@ const chromaPass = new ShaderPass({
 });
 composer.addPass(chromaPass);
 
-const ambient = new THREE.AmbientLight(0x3a2a45, 0.35);
+const ambient = new THREE.AmbientLight(0x2f2038, 0.3);
 scene.add(ambient);
 
 const hazeGeo = new THREE.SphereGeometry(52, 32, 16);
 const hazeMat = new THREE.MeshBasicMaterial({
   color: 0x531f77,
   transparent: true,
-  opacity: 0.07,
+  opacity: 0.06,
   side: THREE.BackSide,
   depthWrite: false
 });
@@ -124,120 +125,155 @@ scene.add(bgPlane);
 const floor = new THREE.Mesh(
   new THREE.PlaneGeometry(50, 36, 1, 1),
   new THREE.MeshPhysicalMaterial({
-    color: 0x221126,
-    metalness: 0.55,
-    roughness: 0.22,
-    clearcoat: 1.0,
-    clearcoatRoughness: 0.18,
-    emissive: 0x12070e,
-    emissiveIntensity: 0.35
+    color: 0x1d1024,
+    metalness: 0.48,
+    roughness: 0.3,
+    clearcoat: 0.9,
+    clearcoatRoughness: 0.2,
+    emissive: 0x130717,
+    emissiveIntensity: 0.18
   })
 );
 floor.rotation.x = -Math.PI / 2;
 floor.position.y = -1.15;
 scene.add(floor);
 
-const discoGroup = new THREE.Group();
-// Align near visible disco-ball area in the background image (upper-left anchor).
-discoGroup.position.set(-9.6, 11.4, -4.6);
-scene.add(discoGroup);
+const dotCount = 560;
+const dotsGeo = new THREE.BufferGeometry();
+const dotPositions = new Float32Array(dotCount * 3);
+const dotColors = new Float32Array(dotCount * 3);
+const dotSizes = new Float32Array(dotCount);
+const dotTwinkles = new Float32Array(dotCount);
 
-const discoBall = new THREE.Mesh(
-  new THREE.SphereGeometry(2.35, 64, 64),
-  new THREE.MeshStandardMaterial({
-    color: 0xffe2b4,
-    metalness: 0.95,
-    roughness: 0.12,
-    envMapIntensity: 1.6,
-    emissive: 0x4d1e44,
-    emissiveIntensity: 0.08
-  })
-);
-discoGroup.add(discoBall);
+const dotBaseRadius = new Float32Array(dotCount);
+const dotAngle = new Float32Array(dotCount);
+const dotHeight = new Float32Array(dotCount);
+const dotSeed = new Float32Array(dotCount);
+const dotPop = new Float32Array(dotCount);
+const dotCooldown = new Float32Array(dotCount);
 
-const discoCoreLight = new THREE.PointLight(0xffddaa, 1.2, 28, 2);
-discoCoreLight.position.set(0, 0, 0);
-discoGroup.add(discoCoreLight);
+for (let i = 0; i < dotCount; i++) {
+  dotBaseRadius[i] = 1.5 + Math.pow(Math.random(), 0.72) * 13.5;
+  dotAngle[i] = Math.random() * Math.PI * 2;
+  dotHeight[i] = -1.1 + (Math.random() - 0.5) * 10.8;
+  dotSeed[i] = Math.random();
+  dotSizes[i] = 18 + Math.random() * 25;
+  dotTwinkles[i] = 0.3;
 
-const sparkleCount = 260;
-const sparkleGeo = new THREE.BufferGeometry();
-const sparklePositions = new Float32Array(sparkleCount * 3);
-for (let i = 0; i < sparkleCount; i++) {
-  const r = 3.2 + Math.random() * 8.8;
-  const a = Math.random() * Math.PI * 2;
-  const h = (Math.random() - 0.5) * 7.5;
-  sparklePositions[i * 3 + 0] = Math.cos(a) * r;
-  sparklePositions[i * 3 + 1] = h;
-  sparklePositions[i * 3 + 2] = Math.sin(a) * r;
+  const warm = new THREE.Color().setHSL(0.12 + Math.random() * 0.08, 0.9, 0.58);
+  const magenta = new THREE.Color().setHSL(0.86 + Math.random() * 0.06, 0.8, 0.54);
+  const mix = 0.4 + Math.random() * 0.6;
+  const color = warm.lerp(magenta, mix * 0.52);
+  dotColors[i * 3 + 0] = color.r;
+  dotColors[i * 3 + 1] = color.g;
+  dotColors[i * 3 + 2] = color.b;
 }
-sparkleGeo.setAttribute('position', new THREE.BufferAttribute(sparklePositions, 3));
 
-const sparkleMat = new THREE.PointsMaterial({
-  color: 0xff8ce3,
-  size: 0.17,
+dotsGeo.setAttribute('position', new THREE.BufferAttribute(dotPositions, 3));
+dotsGeo.setAttribute('aColor', new THREE.BufferAttribute(dotColors, 3));
+dotsGeo.setAttribute('aSize', new THREE.BufferAttribute(dotSizes, 1));
+dotsGeo.setAttribute('aTwinkle', new THREE.BufferAttribute(dotTwinkles, 1));
+
+const dotsMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uPixelRatio: { value: renderer.getPixelRatio() },
+    uIntensity: { value: 1.0 }
+  },
+  vertexShader: `
+    attribute vec3 aColor;
+    attribute float aSize;
+    attribute float aTwinkle;
+    varying vec3 vColor;
+    varying float vTwinkle;
+    void main() {
+      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+      gl_Position = projectionMatrix * mvPosition;
+      gl_PointSize = aSize * uPixelRatio * (150.0 / -mvPosition.z);
+      vColor = aColor;
+      vTwinkle = aTwinkle;
+    }
+  `,
+  fragmentShader: `
+    uniform float uIntensity;
+    varying vec3 vColor;
+    varying float vTwinkle;
+    void main() {
+      vec2 p = gl_PointCoord - vec2(0.5);
+      float d = length(p) * 2.0;
+      float body = smoothstep(1.0, 0.0, d);
+      float core = smoothstep(0.45, 0.0, d);
+      float alpha = body * (0.18 + vTwinkle * 0.75);
+      vec3 col = vColor * (0.55 + core * 0.8 + vTwinkle * 0.55) * uIntensity;
+      gl_FragColor = vec4(col, alpha);
+    }
+  `,
   transparent: true,
-  opacity: 0.66,
-  blending: THREE.AdditiveBlending,
-  depthWrite: false
+  depthWrite: false,
+  blending: THREE.AdditiveBlending
 });
-const glitter = new THREE.Points(sparkleGeo, sparkleMat);
-glitter.position.set(0, 5, 0);
-scene.add(glitter);
+const dotPoints = new THREE.Points(dotsGeo, dotsMat);
+dotPoints.position.set(0, 6.4, -4.0);
+scene.add(dotPoints);
+
+const sparkMax = 1300;
+const sparkGeo = new THREE.BufferGeometry();
+const sparkPositions = new Float32Array(sparkMax * 3);
+const sparkSizes = new Float32Array(sparkMax);
+const sparkColors = new Float32Array(sparkMax * 3);
+const sparkTwinkles = new Float32Array(sparkMax);
+const sparkVel = new Float32Array(sparkMax * 3);
+const sparkLife = new Float32Array(sparkMax);
+let sparkWrite = 0;
+
+sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPositions, 3));
+sparkGeo.setAttribute('aColor', new THREE.BufferAttribute(sparkColors, 3));
+sparkGeo.setAttribute('aSize', new THREE.BufferAttribute(sparkSizes, 1));
+sparkGeo.setAttribute('aTwinkle', new THREE.BufferAttribute(sparkTwinkles, 1));
+
+const sparksMat = dotsMat.clone();
+sparksMat.uniforms = {
+  uPixelRatio: { value: renderer.getPixelRatio() },
+  uIntensity: { value: 1.0 }
+};
+const sparks = new THREE.Points(sparkGeo, sparksMat);
+sparks.position.copy(dotPoints.position);
+scene.add(sparks);
 
 const laserGroup = new THREE.Group();
 scene.add(laserGroup);
-const lasers = [];
-for (let i = 0; i < 8; i++) {
-  const mat = new THREE.MeshBasicMaterial({ color: i % 2 ? 0xff3fae : 0x66a9ff, transparent: true, opacity: 0.0, blending: THREE.AdditiveBlending, depthWrite: false });
-  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 24, 10, 1, true), mat);
-  mesh.position.set((i - 4) * 2.0, 7.5, -5 + i * 0.7);
-  mesh.rotation.z = Math.PI / 2;
+const laserMax = 8;
+const laserMeshes = [];
+const laserSegments = Array.from({ length: laserMax }, () => ({
+  active: false,
+  a: new THREE.Vector2(),
+  b: new THREE.Vector2(),
+  intensity: 0
+}));
+const laserPalette = [0xff70c4, 0xffb35f, 0xdc6fff, 0xff9ea0, 0xff74ff, 0xf7bb63, 0xff63a7, 0xf79bf8];
+
+for (let i = 0; i < laserMax; i++) {
+  const mat = new THREE.MeshBasicMaterial({
+    color: laserPalette[i],
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(18, 0.09), mat);
+  mesh.position.set(0, 6, -6.2 + i * 0.02);
   laserGroup.add(mesh);
-  lasers.push(mesh);
+  laserMeshes.push(mesh);
 }
-
-const spotlightRig = new THREE.Group();
-scene.add(spotlightRig);
-const movingHeads = [];
-function makeMovingHead(x, z, color) {
-  const g = new THREE.Group();
-  g.position.set(x, 8.0, z);
-
-  const spot = new THREE.SpotLight(color, 1.3, 65, Math.PI / 8, 0.42, 1.2);
-  spot.position.set(0, 0, 0);
-  spot.target.position.set(0, -6.5, -9);
-  g.add(spot);
-  g.add(spot.target);
-
-  const cone = new THREE.Mesh(
-    new THREE.ConeGeometry(1.7, 16.5, 24, 1, true),
-    new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: 0.12,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      side: THREE.DoubleSide
-    })
-  );
-  cone.rotation.x = Math.PI;
-  cone.position.y = -8.2;
-  g.add(cone);
-
-  spotlightRig.add(g);
-  movingHeads.push({ group: g, spot, cone });
-}
-
-makeMovingHead(-10, 5, 0xffb176);
-makeMovingHead(-4, 7, 0xff5ad7);
-makeMovingHead(4, 7, 0x74a5ff);
-makeMovingHead(10, 5, 0xff7eb7);
-
-const taikoHitLight = new THREE.PointLight(0xffa866, 0.0, 42, 2);
-taikoHitLight.position.set(0, 3.2, 4.8);
-scene.add(taikoHitLight);
 
 const clock = new THREE.Clock();
+const tempColor = new THREE.Color();
+const tempVec2 = new THREE.Vector2();
+
+let currentLaserMode = 0;
+let laserModeTime = 0;
+let laserModeDuration = 8;
+let visualSyncStart = 0;
+const LASER_MODES = ['fan', 'crisscross', 'triangle', 'wave'];
 
 const audio = new Audio();
 audio.crossOrigin = 'anonymous';
@@ -253,12 +289,25 @@ let recordedChunks = [];
 let currentAudioUrl = null;
 
 const audioState = {
-  bass: 0, mid: 0, high: 0, rms: 0, onset: 0,
-  prevRms: 0, agc: 1, compressed: 0,
-  smoothBass: 0, smoothMid: 0, smoothHigh: 0, smoothRms: 0,
-  mode: { intro: 1, groove: 0, build: 0, climax: 0 },
-  modeDisplay: 'INTRO'
+  bass: 0,
+  mid: 0,
+  high: 0,
+  rms: 0,
+  onset: 0,
+  prevRms: 0,
+  agc: 1,
+  compressed: 0,
+  smoothBass: 0,
+  smoothMid: 0,
+  smoothHigh: 0,
+  smoothRms: 0,
+  mode: { calm: 1, drive: 0, surge: 0 },
+  modeDisplay: 'CALM'
 };
+
+let isFullscreen = false;
+let lastMouseMoveMs = performance.now();
+let uiHiddenForIdle = false;
 
 function setStatus(text) {
   ui.status.textContent = text;
@@ -269,7 +318,7 @@ function setupAudioContext() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   analyser = audioCtx.createAnalyser();
   analyser.fftSize = 2048;
-  analyser.smoothingTimeConstant = 0.70;
+  analyser.smoothingTimeConstant = 0.7;
   freqData = new Uint8Array(analyser.frequencyBinCount);
 
   sourceNode = audioCtx.createMediaElementSource(audio);
@@ -280,6 +329,12 @@ function setupAudioContext() {
 function isSupportedAudioFile(file) {
   const ext = (file.name.split('.').pop() || '').toLowerCase();
   return ['mp3', 'wav', 'ogg', 'm4a'].includes(ext) || (file.type && file.type.startsWith('audio/'));
+}
+
+function resetVisualTiming() {
+  visualSyncStart = clock.elapsedTime;
+  laserModeTime = 0;
+  laserModeDuration = 6 + Math.random() * 6;
 }
 
 function loadAudioFile(file) {
@@ -299,6 +354,7 @@ function loadAudioFile(file) {
     ui.playBtn.disabled = false;
     setStatus(`Loaded ${file.name}`);
     setDropVisible(false);
+    resetVisualTiming();
   } catch (err) {
     setStatus(`Load error: ${err.message}`);
   }
@@ -322,7 +378,7 @@ function analyzeAudio(dt) {
     audioState.smoothMid += (0 - audioState.smoothMid) * decay;
     audioState.smoothHigh += (0 - audioState.smoothHigh) * decay;
     audioState.smoothRms += (0 - audioState.smoothRms) * decay;
-    audioState.onset *= 0.9;
+    audioState.onset *= 0.88;
     return;
   }
 
@@ -341,13 +397,13 @@ function analyzeAudio(dt) {
 
   const rise = Math.max(0, rms - audioState.prevRms);
   audioState.prevRms = rms;
-  audioState.onset = THREE.MathUtils.lerp(audioState.onset, Math.min(1, rise * 7.5 + high * 0.25), 0.22);
+  audioState.onset = THREE.MathUtils.lerp(audioState.onset, Math.min(1, rise * 8.4 + high * 0.28), 0.22);
 
-  const agcTarget = 0.44;
-  const gainNow = THREE.MathUtils.clamp(agcTarget / Math.max(0.08, rms), 0.55, 1.85);
-  audioState.agc = THREE.MathUtils.lerp(audioState.agc, gainNow, 0.08);
+  const agcTarget = 0.42;
+  const gainNow = THREE.MathUtils.clamp(agcTarget / Math.max(0.08, rms), 0.55, 1.9);
+  audioState.agc = THREE.MathUtils.lerp(audioState.agc, gainNow, 0.1);
   const rmsAgc = THREE.MathUtils.clamp(rms * audioState.agc, 0, 2);
-  audioState.compressed = rmsAgc / (rmsAgc + 0.85);
+  audioState.compressed = rmsAgc / (rmsAgc + 0.8);
 
   const smoothA = 1 - Math.exp(-dt / 0.13);
   audioState.smoothBass += (bass - audioState.smoothBass) * smoothA;
@@ -357,88 +413,254 @@ function analyzeAudio(dt) {
 }
 
 function updateStateDirector(dt) {
-  const t = audio.duration > 0 ? (audio.currentTime / audio.duration) : 0;
-  const energy = audioState.smoothRms;
-  const rhythm = 0.55 * audioState.smoothMid + 0.45 * audioState.smoothBass;
+  const calmTarget = THREE.MathUtils.clamp(1.0 - (audioState.smoothRms * 1.6 + audioState.smoothMid * 0.7), 0, 1);
+  const driveTarget = THREE.MathUtils.clamp(audioState.smoothMid * 1.35 + audioState.smoothRms * 0.5, 0, 1);
+  const surgeTarget = THREE.MathUtils.clamp(audioState.smoothBass * 1.2 + audioState.onset * 0.9, 0, 1);
 
-  const introTarget = THREE.MathUtils.clamp((0.16 - t) / 0.16, 0, 1) * THREE.MathUtils.clamp((0.60 - energy) / 0.60, 0, 1);
-  const buildTarget = THREE.MathUtils.clamp((energy - 0.42) / 0.38, 0, 1) * THREE.MathUtils.clamp((audioState.onset + audioState.smoothMid) * 0.9, 0, 1);
-  const climaxTarget = THREE.MathUtils.clamp((t - 0.73) / 0.2, 0, 1) * THREE.MathUtils.clamp((energy - 0.46) / 0.35, 0, 1);
-  const grooveTarget = THREE.MathUtils.clamp((1.0 - introTarget) * (0.4 + rhythm) * (1.0 - 0.6 * climaxTarget), 0, 1);
+  const blend = 1 - Math.exp(-dt / 0.22);
+  audioState.mode.calm += (calmTarget - audioState.mode.calm) * blend;
+  audioState.mode.drive += (driveTarget - audioState.mode.drive) * blend;
+  audioState.mode.surge += (surgeTarget - audioState.mode.surge) * blend;
 
-  const targets = { intro: introTarget, groove: grooveTarget, build: buildTarget, climax: climaxTarget };
-  const blend = 1 - Math.exp(-dt / THREE.MathUtils.lerp(1.2, 0.55, config.extreme));
+  const sum = audioState.mode.calm + audioState.mode.drive + audioState.mode.surge || 1;
+  audioState.mode.calm /= sum;
+  audioState.mode.drive /= sum;
+  audioState.mode.surge /= sum;
 
-  for (const k of Object.keys(audioState.mode)) audioState.mode[k] += (targets[k] - audioState.mode[k]) * blend;
-
-  const sum = Object.values(audioState.mode).reduce((a, b) => a + b, 0) || 1;
-  for (const k of Object.keys(audioState.mode)) audioState.mode[k] /= sum;
-
-  const dominant = Object.entries(audioState.mode).sort((a, b) => b[1] - a[1])[0][0];
-  audioState.modeDisplay = dominant.toUpperCase();
+  let modeName = 'CALM';
+  if (audioState.mode.drive > audioState.mode.calm && audioState.mode.drive >= audioState.mode.surge) modeName = 'DRIVE';
+  if (audioState.mode.surge > audioState.mode.drive && audioState.mode.surge > audioState.mode.calm) modeName = 'SURGE';
+  audioState.modeDisplay = modeName;
   ui.stateText.textContent = `State: ${audioState.modeDisplay}`;
 }
 
-function applyLightingDirection(dt, elapsed) {
-  const mode = audioState.mode;
-  const groovePulse = 0.5 + 0.5 * Math.sin(elapsed * THREE.MathUtils.lerp(2.4, 5.2, config.extreme));
-  const directorEnergy = THREE.MathUtils.clamp((0.28 + 0.7 * audioState.smoothRms + mode.build * 0.2 + mode.climax * 0.25) * config.masterIntensity, 0.18, 1.25);
+function distancePointToSegment(p, a, b) {
+  tempVec2.copy(b).sub(a);
+  const lenSq = Math.max(1e-6, tempVec2.lengthSq());
+  const t = THREE.MathUtils.clamp(((p.x - a.x) * tempVec2.x + (p.y - a.y) * tempVec2.y) / lenSq, 0, 1);
+  const px = a.x + tempVec2.x * t;
+  const py = a.y + tempVec2.y * t;
+  const dx = p.x - px;
+  const dy = p.y - py;
+  return Math.sqrt(dx * dx + dy * dy);
+}
 
-  const discoSpeed = THREE.MathUtils.lerp(0.25, 1.35, mode.climax * 0.8 + mode.build * 0.5 + config.extreme * 0.4);
-  discoGroup.rotation.y += dt * discoSpeed;
-  discoBall.rotation.x += dt * 0.17;
+function emitSparkBurst(x, y, z, baseColor, amount) {
+  for (let s = 0; s < amount; s++) {
+    const idx = sparkWrite;
+    sparkWrite = (sparkWrite + 1) % sparkMax;
 
-  const discoSparkle = (0.15 + audioState.smoothHigh * 1.2 + mode.build * 0.35 + mode.climax * 0.5) * config.discoEnergy;
-  discoCoreLight.intensity = THREE.MathUtils.clamp(0.5 + discoSparkle * 1.3, 0.4, 2.6);
-  discoCoreLight.color.setRGB(1.0, 0.75 + 0.12 * mode.groove, 0.45 + 0.35 * mode.build);
+    const ang = Math.random() * Math.PI * 2;
+    const spd = 0.7 + Math.random() * 2.3;
+    sparkPositions[idx * 3 + 0] = x;
+    sparkPositions[idx * 3 + 1] = y;
+    sparkPositions[idx * 3 + 2] = z;
+    sparkVel[idx * 3 + 0] = Math.cos(ang) * spd;
+    sparkVel[idx * 3 + 1] = Math.sin(ang) * spd;
+    sparkVel[idx * 3 + 2] = (Math.random() - 0.5) * 0.5;
+    sparkLife[idx] = 0.12 + Math.random() * 0.26;
+    sparkSizes[idx] = 7 + Math.random() * 12;
+    sparkTwinkles[idx] = 0.6 + Math.random() * 0.4;
 
-  glitter.rotation.y += dt * THREE.MathUtils.lerp(0.08, 0.6, mode.groove + mode.climax * 0.3 + config.extreme * 0.2);
-  glitter.material.opacity = THREE.MathUtils.clamp(0.12 + audioState.smoothHigh * 0.5 + mode.build * 0.2 + mode.climax * 0.18, 0.08, 0.75);
-  glitter.material.color.setHSL(0.88 - mode.climax * 0.06, 0.82, 0.62);
+    tempColor.copy(baseColor).offsetHSL((Math.random() - 0.5) * 0.04, 0.05, 0.08);
+    sparkColors[idx * 3 + 0] = tempColor.r;
+    sparkColors[idx * 3 + 1] = tempColor.g;
+    sparkColors[idx * 3 + 2] = tempColor.b;
+  }
+}
 
-  const taiko = THREE.MathUtils.clamp(audioState.onset * 1.8 + audioState.smoothBass * 0.6, 0, 1.2);
-  taikoHitLight.intensity = THREE.MathUtils.lerp(taikoHitLight.intensity, taiko * 2.1, 0.15);
+function updateSwirlDots(dt, elapsed) {
+  const bassPush = 0.65 + audioState.smoothBass * 1.05;
+  const swirlSpeed = (0.18 + audioState.smoothMid * 1.85) * (0.7 + config.discoEnergy * 0.6);
+  const highTwinkle = THREE.MathUtils.clamp(0.2 + audioState.smoothHigh * 1.2, 0.2, 1.25);
+  const sizePulse = 1 + audioState.smoothHigh * 0.24 + audioState.onset * 0.12;
 
-  movingHeads.forEach((h, i) => {
-    const speed = THREE.MathUtils.lerp(0.22, 1.8, mode.groove * 0.4 + mode.build * 0.6 + mode.climax * 1.0 + config.extreme * 0.6);
-    const phase = elapsed * speed + i * 1.4;
-    const arc = THREE.MathUtils.lerp(0.24, 0.84, mode.build * 0.6 + mode.climax + config.extreme * 0.35);
-    h.group.rotation.y = Math.sin(phase) * arc;
-    h.group.rotation.x = -0.12 + Math.cos(phase * 0.9) * 0.13;
+  for (let i = 0; i < dotCount; i++) {
+    dotAngle[i] += dt * swirlSpeed * (0.52 + dotSeed[i] * 1.1);
+    const wobble = 1 + 0.17 * Math.sin(elapsed * (0.4 + dotSeed[i] * 1.2) + dotSeed[i] * 12.0);
+    const radius = dotBaseRadius[i] * bassPush * wobble + audioState.onset * (0.35 + dotSeed[i] * 1.2);
 
-    const coneWiden = 0.7 + taiko * 0.25;
-    h.spot.angle = THREE.MathUtils.clamp((0.14 + mode.climax * 0.07 + mode.build * 0.05) * coneWiden, 0.12, 0.34);
-    const spotInt = (0.32 + directorEnergy * (0.8 + mode.climax * 0.5 + mode.build * 0.3) + groovePulse * 0.25 * mode.groove) * config.spotlightBrightness;
-    h.spot.intensity = THREE.MathUtils.clamp(spotInt, 0.15, 2.9);
-    h.cone.material.opacity = THREE.MathUtils.clamp(0.05 + h.spot.intensity * 0.08, 0.04, 0.30);
-  });
+    const flowAngle = dotAngle[i] + Math.sin(elapsed * 0.28 + dotSeed[i] * 8.0) * 0.3;
+    dotPositions[i * 3 + 0] = Math.cos(flowAngle) * radius;
+    dotPositions[i * 3 + 1] = dotHeight[i] + Math.sin(flowAngle * 1.8 + elapsed * 0.6 + dotSeed[i] * 6.0) * 0.75;
+    dotPositions[i * 3 + 2] = Math.sin(flowAngle * 0.72 + elapsed * 0.3) * 1.9;
 
-  lasers.forEach((l, i) => {
-    const active = mode.build * 0.55 + mode.climax * 1.0 + mode.groove * 0.28;
-    const pulse = 0.4 + 0.6 * Math.sin(elapsed * 3.5 + i * 0.8);
-    const amount = active * pulse * config.laserAmount;
-    l.material.opacity = THREE.MathUtils.clamp(amount * (0.12 + 0.28 * directorEnergy), 0.0, 0.48);
-    l.rotation.y = Math.sin(elapsed * (0.4 + mode.climax * 1.2) + i) * 0.9;
-    l.rotation.z = Math.PI / 2 + Math.cos(elapsed * (0.7 + mode.groove * 1.1) + i * 1.2) * 0.4;
-  });
+    dotCooldown[i] = Math.max(0, dotCooldown[i] - dt);
+    dotPop[i] = Math.max(0, dotPop[i] - dt * 4.8);
 
-  floor.material.emissiveIntensity = THREE.MathUtils.clamp(0.07 + directorEnergy * (0.14 + mode.groove * 0.09 + mode.climax * 0.06), 0.05, 0.33);
+    dotTwinkles[i] = 0.25 + highTwinkle * (0.25 + 0.75 * Math.abs(Math.sin(elapsed * (4.5 + dotSeed[i] * 6.8) + dotSeed[i] * 18.0)));
+    dotSizes[i] = (14 + dotBaseRadius[i] * 1.1) * sizePulse * (1 + dotPop[i] * 0.9);
+  }
 
-  bloomPass.strength = THREE.MathUtils.clamp((0.45 + directorEnergy * 0.65 + mode.climax * 0.22) * config.bloomStrength * (config.cinematicMode ? 0.9 : 1.05), 0.2, 2.2);
-  bloomPass.radius = THREE.MathUtils.lerp(0.18, 0.45, mode.build + mode.climax * 0.9 + config.extreme * 0.6);
-  bloomPass.threshold = THREE.MathUtils.lerp(0.47, 0.24, mode.climax * 0.7 + (config.clubMode ? 0.4 : 0));
+  dotsGeo.attributes.position.needsUpdate = true;
+  dotsGeo.attributes.aSize.needsUpdate = true;
+  dotsGeo.attributes.aTwinkle.needsUpdate = true;
+  dotsMat.uniforms.uIntensity.value = 0.88 + audioState.smoothRms * 0.95;
+}
 
-  const hit = THREE.MathUtils.clamp(audioState.onset * 1.2 + mode.climax * 0.25, 0, 1);
-  chromaPass.uniforms.amount.value = THREE.MathUtils.lerp(chromaPass.uniforms.amount.value, hit * 0.6, 0.16);
+function updateLasers(dt, elapsed) {
+  laserModeTime += dt;
+  if (laserModeTime >= laserModeDuration) {
+    laserModeTime = 0;
+    laserModeDuration = 6 + Math.random() * 6;
+    currentLaserMode = (currentLaserMode + 1) % LASER_MODES.length;
+  }
 
-  renderer.toneMappingExposure = THREE.MathUtils.clamp(0.86 + directorEnergy * 0.24 - mode.intro * 0.08, 0.72, 1.22);
+  const mode = LASER_MODES[currentLaserMode];
+  const energy = audioState.smoothRms;
+  const activeCount = THREE.MathUtils.clamp(Math.round(3 + audioState.smoothMid * 5 + energy * 1.5), 3, laserMax);
+  const baseSpeed = 0.25 + audioState.smoothMid * 1.3 + config.extreme * 0.5;
+  const baseLen = 14.5 + energy * 6.8;
+  const onsetSnap = audioState.onset > 0.33 ? (Math.random() - 0.5) * 0.09 : 0;
 
-  // Subtle camera drift so background remains a stable stage image.
-  const camTargetX = Math.sin(elapsed * 0.20) * (0.12 + mode.build * 0.18 + mode.climax * 0.2);
-  const camTargetY = 8.4 + Math.sin(elapsed * 0.26) * (0.05 + mode.groove * 0.08 + config.extreme * 0.1);
+  for (let i = 0; i < laserMax; i++) {
+    const mesh = laserMeshes[i];
+    const seg = laserSegments[i];
+
+    if (i >= activeCount) {
+      mesh.material.opacity = 0;
+      seg.active = false;
+      continue;
+    }
+
+    const n = activeCount <= 1 ? 0 : i / (activeCount - 1);
+    let angle = 0;
+    if (mode === 'fan') {
+      const sweep = Math.sin((elapsed + i * 0.08) * (0.6 + baseSpeed)) * 0.65;
+      angle = THREE.MathUtils.lerp(-0.95, 0.95, n) + sweep * 0.25;
+    } else if (mode === 'crisscross') {
+      const dir = i % 2 ? 1 : -1;
+      angle = dir * (0.42 + 0.43 * Math.sin(elapsed * (0.8 + baseSpeed * 0.7) + n * 8.0));
+    } else if (mode === 'triangle') {
+      const triCorner = (elapsed * (0.36 + baseSpeed * 0.3) + n * Math.PI * 2) % (Math.PI * 2);
+      angle = triCorner + (Math.PI / 3) * Math.round((i % 3)) + Math.sin(elapsed * 0.5 + n * 7.0) * 0.16;
+    } else {
+      angle = Math.sin(elapsed * (0.45 + baseSpeed * 0.35) + n * 9.0) * 1.05;
+    }
+
+    angle += onsetSnap;
+    const y = 1.8 + n * 7.8 + Math.sin(elapsed * 0.5 + i * 1.2) * 0.4;
+    const x = Math.sin(elapsed * 0.23 + i * 0.9) * 1.5;
+
+    const bassPunch = 1 + audioState.smoothBass * 1.4 + audioState.onset * 0.8;
+    const thickness = (0.055 + 0.06 * bassPunch) * config.laserAmount * (0.86 + config.spotlightBrightness * 0.22);
+    const highFlicker = 0.9 + 0.28 * audioState.smoothHigh * Math.sin(elapsed * (22 + i * 3.1));
+    const brightness = THREE.MathUtils.clamp((0.16 + energy * 0.5 + audioState.smoothMid * 0.35) * highFlicker * config.masterIntensity, 0.08, 0.72);
+
+    mesh.position.set(x, y, -6.15 + i * 0.012);
+    mesh.rotation.z = angle;
+    mesh.scale.set(baseLen / 18, thickness / 0.09, 1);
+    mesh.material.opacity = brightness;
+
+    seg.active = true;
+    seg.intensity = brightness;
+    const halfLen = baseLen * 0.5;
+    const dx = Math.cos(angle) * halfLen;
+    const dy = Math.sin(angle) * halfLen;
+    seg.a.set(x - dx, y - dy);
+    seg.b.set(x + dx, y + dy);
+  }
+}
+
+function updateDotLaserInteractions() {
+  for (let i = 0; i < dotCount; i++) {
+    if (dotCooldown[i] > 0) continue;
+
+    const dotP = tempVec2.set(dotPositions[i * 3 + 0], dotPositions[i * 3 + 1] + 6.4);
+    for (let l = 0; l < laserMax; l++) {
+      const seg = laserSegments[l];
+      if (!seg.active || seg.intensity < 0.06) continue;
+      const threshold = 0.2 + seg.intensity * 0.9;
+      const d = distancePointToSegment(dotP, seg.a, seg.b);
+      if (d < threshold) {
+        dotPop[i] = Math.min(1, dotPop[i] + 0.9);
+        dotCooldown[i] = 0.15 + Math.random() * 0.15;
+
+        const warmMagenta = new THREE.Color(dotColors[i * 3 + 0], dotColors[i * 3 + 1], dotColors[i * 3 + 2]);
+        emitSparkBurst(
+          dotPositions[i * 3 + 0],
+          dotPositions[i * 3 + 1],
+          dotPositions[i * 3 + 2],
+          warmMagenta,
+          2 + Math.floor(Math.random() * 5)
+        );
+        break;
+      }
+    }
+  }
+}
+
+function updateSparks(dt) {
+  for (let i = 0; i < sparkMax; i++) {
+    if (sparkLife[i] <= 0) {
+      sparkSizes[i] = 0;
+      continue;
+    }
+    sparkLife[i] -= dt;
+    if (sparkLife[i] <= 0) {
+      sparkSizes[i] = 0;
+      continue;
+    }
+
+    sparkPositions[i * 3 + 0] += sparkVel[i * 3 + 0] * dt;
+    sparkPositions[i * 3 + 1] += sparkVel[i * 3 + 1] * dt;
+    sparkPositions[i * 3 + 2] += sparkVel[i * 3 + 2] * dt;
+    sparkVel[i * 3 + 2] *= 0.98;
+
+    const lifeNorm = THREE.MathUtils.clamp(sparkLife[i] / 0.3, 0, 1);
+    sparkTwinkles[i] = 0.2 + lifeNorm * 1.2;
+    sparkSizes[i] *= 0.96;
+  }
+
+  sparkGeo.attributes.position.needsUpdate = true;
+  sparkGeo.attributes.aSize.needsUpdate = true;
+  sparkGeo.attributes.aTwinkle.needsUpdate = true;
+  sparksMat.uniforms.uIntensity.value = 0.82 + audioState.smoothHigh * 0.9;
+}
+
+function applyVisualDirection(dt, elapsed) {
+  const visualTime = audio.paused ? elapsed - visualSyncStart : audio.currentTime;
+
+  updateSwirlDots(dt, visualTime);
+  updateLasers(dt, visualTime);
+  updateDotLaserInteractions();
+  updateSparks(dt);
+
+  const energy = audioState.smoothRms;
+  const highPeak = audioState.smoothHigh + audioState.onset * 0.5;
+
+  floor.material.emissiveIntensity = THREE.MathUtils.clamp(0.08 + energy * 0.17, 0.07, 0.28);
+
+  bloomPass.strength = THREE.MathUtils.clamp((0.42 + energy * 0.45 + highPeak * 0.16) * config.bloomStrength, 0.2, 1.25);
+  bloomPass.radius = THREE.MathUtils.lerp(0.2, 0.42, energy + audioState.smoothMid * 0.4);
+  bloomPass.threshold = THREE.MathUtils.lerp(0.56, 0.36, THREE.MathUtils.clamp(highPeak, 0, 1));
+
+  chromaPass.uniforms.amount.value = THREE.MathUtils.lerp(chromaPass.uniforms.amount.value, audioState.onset * 0.22, 0.14);
+
+  renderer.toneMappingExposure = THREE.MathUtils.clamp(0.84 + energy * 0.16, 0.78, 1.08);
+
+  const camTargetX = Math.sin(visualTime * 0.22) * (0.08 + energy * 0.18);
+  const camTargetY = 8.35 + Math.sin(visualTime * 0.18) * (0.04 + audioState.smoothMid * 0.06);
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, camTargetX, 0.03);
   camera.position.y = THREE.MathUtils.lerp(camera.position.y, camTargetY, 0.03);
-  camera.lookAt(0, 4.95 + mode.build * 0.15, 0);
+  camera.lookAt(0, 4.95, 0);
+}
+
+function setUiHiddenForIdle(hidden) {
+  if (uiHiddenForIdle === hidden) return;
+  uiHiddenForIdle = hidden;
+  ui.panel.style.opacity = hidden ? '0' : '1';
+  ui.panel.style.pointerEvents = hidden ? 'none' : 'auto';
+  document.body.style.cursor = hidden ? 'none' : '';
+}
+
+function updateFullscreenIdle(nowMs) {
+  if (!isFullscreen) {
+    setUiHiddenForIdle(false);
+    return;
+  }
+  const inactive = nowMs - lastMouseMoveMs > 1500;
+  setUiHiddenForIdle(inactive);
 }
 
 function updateHud() {
@@ -455,7 +677,8 @@ function animate() {
 
   analyzeAudio(dt);
   updateStateDirector(dt);
-  applyLightingDirection(dt, elapsed);
+  applyVisualDirection(dt, elapsed);
+  updateFullscreenIdle(performance.now());
   updateHud();
 
   composer.render();
@@ -562,6 +785,49 @@ window.addEventListener('dragover', onDragOver);
 window.addEventListener('dragleave', onDragLeave);
 window.addEventListener('drop', onDrop);
 
+window.addEventListener('mousemove', () => {
+  lastMouseMoveMs = performance.now();
+  if (isFullscreen) setUiHiddenForIdle(false);
+});
+
+window.addEventListener('keydown', async (e) => {
+  if (e.repeat) return;
+  if (e.key === 'f' || e.key === 'F') {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (err) {
+      setStatus(`Fullscreen error: ${err.message}`);
+    }
+  }
+
+  if (e.key === 'r' || e.key === 'R') {
+    if (!audio.src) {
+      setStatus('Load audio before restarting.');
+      return;
+    }
+    audio.currentTime = 0;
+    resetVisualTiming();
+    setStatus('Restarted song');
+    if (!audio.paused) {
+      try {
+        await audio.play();
+      } catch (err) {
+        setStatus(`Restart error: ${err.message}`);
+      }
+    }
+  }
+});
+
+document.addEventListener('fullscreenchange', () => {
+  isFullscreen = Boolean(document.fullscreenElement);
+  lastMouseMoveMs = performance.now();
+  if (!isFullscreen) setUiHiddenForIdle(false);
+});
+
 // Beginner-friendly default: show loader until audio is loaded.
 ui.dropZone.classList.add('visible');
 ui.dropZone.addEventListener('click', () => ui.fileInput.click());
@@ -588,6 +854,7 @@ ui.playBtn.addEventListener('click', async () => {
     setupAudioContext();
     if (audioCtx.state === 'suspended') await audioCtx.resume();
     await audio.play();
+    resetVisualTiming();
     setStatus('Playing');
   } catch (err) {
     setStatus(`Play error: ${err.message}`);
@@ -636,4 +903,6 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
   composer.setSize(window.innerWidth, window.innerHeight);
+  dotsMat.uniforms.uPixelRatio.value = renderer.getPixelRatio();
+  sparksMat.uniforms.uPixelRatio.value = renderer.getPixelRatio();
 });
