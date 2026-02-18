@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Japanese Disco Lightshow Visualizer</title>
+    <style>
+      html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #07040d; font-family: Arial, sans-serif; }
+      #app { width: 100%; height: 100%; }
+      #ui {
+        position: fixed; top: 12px; left: 12px; z-index: 20;
+        width: 340px; max-height: calc(100vh - 24px); overflow: auto;
+        background: rgba(12, 10, 20, 0.78); color: #f7e9ff;
+        border: 1px solid rgba(255,255,255,0.15); border-radius: 12px;
+        padding: 12px; backdrop-filter: blur(8px);
+      }
+      #ui h2 { margin: 0 0 8px 0; font-size: 16px; }
+      .row { margin-bottom: 8px; }
+      .row label { display: block; font-size: 12px; margin-bottom: 2px; }
+      input[type="range"] { width: 100%; }
+      button { margin: 2px 2px 2px 0; border: 0; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+      .primary { background: #b94eff; color: white; }
+      .secondary { background: #2f2144; color: #efe4ff; }
+      .meter-wrap { display: grid; grid-template-columns: 38px 1fr; gap: 6px; align-items: center; margin-bottom: 4px; }
+      .meter { background: rgba(255,255,255,0.1); height: 8px; border-radius: 999px; overflow: hidden; }
+      .fill { height: 100%; width: 0%; transition: width 90ms linear; }
+      #stateText { font-size: 12px; opacity: 0.9; margin-top: 6px; }
+      #status { font-size: 12px; margin-top: 6px; color: #ffd68b; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="ui">
+      <h2>Japanese Disco Lightshow Director</h2>
+
+      <div class="row">
+        <button id="loadBtn" class="primary">Load Audio</button>
+        <button id="playBtn" class="secondary">Play</button>
+        <button id="pauseBtn" class="secondary">Pause</button>
+      </div>
+
+      <div class="row">
+        <button id="recordStartBtn" class="primary">Start Recording</button>
+        <button id="recordStopBtn" class="secondary">Stop Recording</button>
+      </div>
+
+      <div class="row"><label>Master Intensity</label><input id="masterIntensity" type="range" min="0" max="2" step="0.01" value="1"/></div>
+      <div class="row"><label>Bloom Strength</label><input id="bloomStrength" type="range" min="0" max="2.5" step="0.01" value="1.2"/></div>
+      <div class="row"><label>Disco Energy</label><input id="discoEnergy" type="range" min="0" max="2" step="0.01" value="1"/></div>
+      <div class="row"><label>Laser Amount</label><input id="laserAmount" type="range" min="0" max="2" step="0.01" value="0.9"/></div>
+      <div class="row"><label>Spotlight Brightness</label><input id="spotBrightness" type="range" min="0" max="2" step="0.01" value="1"/></div>
+      <div class="row"><label>EXTREME (Elegant → Club)</label><input id="extreme" type="range" min="0" max="1" step="0.01" value="0.35"/></div>
+
+      <div class="row">
+        <label><input id="cinematicMode" type="checkbox" checked/> Cinematic Mode</label>
+        <label><input id="clubMode" type="checkbox"/> Club Mode</label>
+        <label><input id="showHud" type="checkbox" checked/> Show HUD</label>
+      </div>
+
+      <div id="hud">
+        <div class="meter-wrap"><span>Bass</span><div class="meter"><div id="bassMeter" class="fill" style="background:#ff9c33"></div></div></div>
+        <div class="meter-wrap"><span>Mid</span><div class="meter"><div id="midMeter" class="fill" style="background:#ff57cc"></div></div></div>
+        <div class="meter-wrap"><span>High</span><div class="meter"><div id="highMeter" class="fill" style="background:#62b2ff"></div></div></div>
+      </div>
+
+      <div id="stateText">State: INTRO</div>
+      <div id="status">Tip: Click “Load Audio”, then “Play”.</div>
+    </div>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
