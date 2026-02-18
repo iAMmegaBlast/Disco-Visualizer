@@ -7,6 +7,7 @@ Single-file preview + MP4 export tool.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
 import os
@@ -15,12 +16,10 @@ import shutil
 import subprocess
 import sys
 import time
-import importlib.util
-from dataclasses import asdict, dataclass
-from typing import Dict, List, Tuple
 import tkinter as tk
+from dataclasses import asdict, dataclass
 from tkinter import filedialog, messagebox
-
+from typing import Dict, List, Tuple
 
 REQUIRED_PYTHON_PACKAGES = ["pygame", "numpy", "librosa"]
 missing = [pkg for pkg in REQUIRED_PYTHON_PACKAGES if importlib.util.find_spec(pkg) is None]
@@ -31,10 +30,9 @@ if missing:
     print("Then rerun this command.\n")
     sys.exit(1)
 
+import librosa
 import numpy as np
 import pygame
-import librosa
-
 
 WIDTH, HEIGHT = 1920, 1080
 FPS = 60
@@ -46,27 +44,45 @@ class Config:
     origin_x: float = 0.18
     origin_y: float = 0.18
     intensity_master: float = 1.0
+
     haze_strength: float = 0.22
+
     ray_count: int = 240
     ray_length: float = 1.25
     ray_rotation_speed: float = 0.22
     ray_thickness: int = 2
     ray_shimmer: float = 0.65
     ray_brightness: float = 1.0
+
     gobo_strength: float = 0.38
     gobo_speed: float = 0.35
+
     laser_count: int = 4
     laser_speed: float = 0.55
     laser_thickness: int = 18
     laser_brightness: float = 1.0
-    floor_pulse_strength: float = 0.8
+
+    floor_pulse_strength: float = 0.80
+    floor_sweep_strength: float = 0.68
+
     sparkle_density: float = 1.0
     sparkle_size: float = 1.0
-    bloom_strength: float = 0.58
+
+    # Tuning note: thresholded bloom. Raise bloom_threshold for less glow.
+    bloom_strength: float = 0.62
+    bloom_threshold: int = 168
+
     strobe_strength: float = 0.80
     strobe_cooldown: float = 1.3
+
     drop_mode_sensitivity: float = 1.4
     drop_mode_duration: float = 6.0
+
+    # Tuning note: crowd band controls where crowd shimmer and sparkle bias happen.
+    crowd_y0: float = 0.72
+    crowd_y1: float = 0.90
+    crowd_shimmer_strength: float = 0.16
+
     palette_warm: Tuple[int, int, int] = (255, 165, 60)
     palette_magenta: Tuple[int, int, int] = (255, 30, 190)
     palette_blue: Tuple[int, int, int] = (80, 170, 255)
@@ -95,10 +111,13 @@ def parse_origin(origin: str) -> Tuple[float, float]:
 def load_and_fit_background(path: str) -> pygame.Surface:
     if not os.path.exists(path):
         raise FileNotFoundError(f"Background image not found: {path}")
+
+    # Crash fix note: this function uses convert(), which requires display mode set.
     img = pygame.image.load(path).convert()
     src_w, src_h = img.get_size()
     src_ratio = src_w / src_h
     target_ratio = WIDTH / HEIGHT
+
     if abs(src_ratio - target_ratio) < 1e-4:
         return pygame.transform.smoothscale(img, (WIDTH, HEIGHT))
 
@@ -110,6 +129,7 @@ def load_and_fit_background(path: str) -> pygame.Surface:
         new_h = int(src_w / target_ratio)
         y0 = (src_h - new_h) // 2
         crop = img.subsurface((0, y0, src_w, new_h))
+
     return pygame.transform.smoothscale(crop, (WIDTH, HEIGHT))
 
 
@@ -125,8 +145,7 @@ def smooth_series(x: np.ndarray, alpha: float = 0.2) -> np.ndarray:
 
 def normalize(x: np.ndarray, p99_floor: float = 1e-6) -> np.ndarray:
     x = np.maximum(0.0, x)
-    p = np.percentile(x, 99)
-    p = max(p, p99_floor)
+    p = max(np.percentile(x, 99), p99_floor)
     return np.clip(x / p, 0.0, 1.5)
 
 
@@ -137,14 +156,14 @@ def analyze_audio(audio_path: str, fps: int, duration_limit: float | None) -> Di
 
     hop = max(256, int(sr / fps))
     n_fft = 4096
-    S = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop, window="hann"))
+    spec = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop, window="hann"))
     freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
 
     def band_energy(low: float, high: float) -> np.ndarray:
         mask = (freqs >= low) & (freqs < high)
         if not np.any(mask):
-            return np.zeros(S.shape[1], dtype=np.float32)
-        return np.mean(S[mask, :], axis=0)
+            return np.zeros(spec.shape[1], dtype=np.float32)
+        return np.mean(spec[mask, :], axis=0)
 
     bass = band_energy(20, 150)
     mids = band_energy(150, 2000)
@@ -154,10 +173,14 @@ def analyze_audio(audio_path: str, fps: int, duration_limit: float | None) -> Di
     peak_frames = librosa.util.frame(np.pad(np.abs(y), (0, hop)), frame_length=hop, hop_length=hop)
     peak = peak_frames.max(axis=0)
 
-    min_len = min(len(bass), len(mids), len(highs), len(rms), len(peak))
-    bass, mids, highs, rms, peak = bass[:min_len], mids[:min_len], highs[:min_len], rms[:min_len], peak[:min_len]
-
     onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop)
+
+    min_len = min(len(bass), len(mids), len(highs), len(rms), len(peak), len(onset_env))
+    bass = bass[:min_len]
+    mids = mids[:min_len]
+    highs = highs[:min_len]
+    rms = rms[:min_len]
+    peak = peak[:min_len]
     onset_env = onset_env[:min_len]
 
     bass = smooth_series(normalize(bass), 0.25)
@@ -167,14 +190,12 @@ def analyze_audio(audio_path: str, fps: int, duration_limit: float | None) -> Di
     peak = smooth_series(normalize(peak), 0.20)
     onset_env = smooth_series(normalize(onset_env), 0.15)
 
-    energy = 0.45 * bass + 0.35 * mids + 0.2 * highs
+    energy = 0.45 * bass + 0.35 * mids + 0.20 * highs
     d_energy = np.diff(np.r_[energy[0], energy])
 
     strobe = (onset_env > 0.66) & (d_energy > 0.03)
     drop_raw = (smooth_series(energy, 0.08) > np.percentile(energy, 78)) & (d_energy > 0.015)
 
-    total_frames = min_len
-    duration = total_frames / fps
     return {
         "bass": bass,
         "mids": mids,
@@ -184,9 +205,16 @@ def analyze_audio(audio_path: str, fps: int, duration_limit: float | None) -> Di
         "onset": onset_env,
         "strobe": strobe.astype(np.float32),
         "drop_raw": drop_raw.astype(np.float32),
-        "frames": total_frames,
-        "duration": duration,
+        "frames": min_len,
+        "duration": min_len / fps,
     }
+
+
+def make_haze_noise(seed: int = 7, w: int = 320, h: int = 180) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    n = rng.random((h, w), dtype=np.float32)
+    n = (n + np.roll(n, 2, axis=0) + np.roll(n, 3, axis=1)) / 3.0
+    return n
 
 
 def tinted_circle(radius: int, color: Tuple[int, int, int], alpha: int) -> pygame.Surface:
@@ -198,19 +226,24 @@ def tinted_circle(radius: int, color: Tuple[int, int, int], alpha: int) -> pygam
     return surf
 
 
-def make_haze_noise(seed: int = 7, w: int = 320, h: int = 180) -> np.ndarray:
-    rng = np.random.default_rng(seed)
-    n = rng.random((h, w), dtype=np.float32)
-    n = (n + np.roll(n, 2, axis=0) + np.roll(n, 3, axis=1)) / 3.0
-    return n
+def blend_color(a: Tuple[int, int, int], b: Tuple[int, int, int], c: Tuple[int, int, int], wa: float, wb: float, wc: float) -> Tuple[int, int, int]:
+    s = max(1e-6, wa + wb + wc)
+    wa, wb, wc = wa / s, wb / s, wc / s
+    return (
+        int(a[0] * wa + b[0] * wb + c[0] * wc),
+        int(a[1] * wa + b[1] * wb + c[1] * wc),
+        int(a[2] * wa + b[2] * wb + c[2] * wc),
+    )
 
 
 class Sparkle:
     __slots__ = ("x", "y", "vx", "vy", "life", "ttl", "size", "color")
 
     def __init__(self, x, y, vx, vy, ttl, size, color):
-        self.x, self.y = x, y
-        self.vx, self.vy = vx, vy
+        self.x = x
+        self.y = y
+        self.vx = vx
+        self.vy = vy
         self.life = ttl
         self.ttl = ttl
         self.size = size
@@ -224,16 +257,23 @@ class DiscoVisualizer:
         self.seed = seed
         self.rng = random.Random(seed)
         self.hud = hud
+
         self.sparkles: List[Sparkle] = []
         self.last_strobe_t = -99.0
         self.strobe_frames_left = 0
         self.drop_until = -1.0
         self.last_drop_t = -99.0
+
         self.haze_noise = make_haze_noise(seed)
-        self.haze_base = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        self.crowd_noise = make_haze_noise(seed + 101, 512, 96)
+
         self.light_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         self.tmp_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         self.font = pygame.font.SysFont("consolas", 24)
+
+        self.dynamic_warm = self.cfg.palette_warm
+        self.dynamic_magenta = self.cfg.palette_magenta
+        self.dynamic_blue = self.cfg.palette_blue
 
     def feature_at(self, idx: int, key: str) -> float:
         arr = self.f[key]
@@ -243,20 +283,41 @@ class DiscoVisualizer:
             return float(arr[-1])
         return float(arr[idx])
 
-    def spawn_sparkles(self, highs: float, t: float):
+    def update_dynamic_palette(self, energy: float, drop_mul: float):
+        warm_w = max(0.05, 1.15 - energy)
+        mag_w = 0.35 + 0.75 * energy
+        blue_w = 0.18 + 0.52 * energy
+        if drop_mul > 1.0:
+            mag_w += 0.65
+            blue_w += 0.65
+            warm_w *= 0.65
+
+        self.dynamic_warm = blend_color(self.cfg.palette_warm, self.cfg.palette_magenta, self.cfg.palette_blue, warm_w, mag_w * 0.25, blue_w * 0.1)
+        self.dynamic_magenta = blend_color(self.cfg.palette_warm, self.cfg.palette_magenta, self.cfg.palette_blue, warm_w * 0.20, mag_w, blue_w * 0.40)
+        self.dynamic_blue = blend_color(self.cfg.palette_warm, self.cfg.palette_magenta, self.cfg.palette_blue, warm_w * 0.08, mag_w * 0.35, blue_w)
+
+    def spawn_sparkles(self, highs: float):
         spawn = int((2 + highs * 18) * self.cfg.sparkle_density)
+        crowd_y0 = self.cfg.crowd_y0 * HEIGHT
+        crowd_y1 = self.cfg.crowd_y1 * HEIGHT
+
         for _ in range(spawn):
             if self.rng.random() > 0.34:
                 continue
+
             x = self.rng.uniform(WIDTH * 0.05, WIDTH * 0.95)
-            y = self.rng.uniform(HEIGHT * 0.08, HEIGHT * 0.94)
+            if self.rng.random() < 0.66:
+                y = self.rng.uniform(crowd_y0, crowd_y1)
+            else:
+                y = self.rng.uniform(HEIGHT * 0.08, HEIGHT * 0.94)
+
             drift = self.rng.uniform(20, 80)
             angle = self.rng.uniform(-1.0, 1.0)
             vx = math.cos(angle) * drift * 0.2
             vy = -drift
             ttl = self.rng.uniform(0.18, 0.7)
             size = self.cfg.sparkle_size * self.rng.uniform(1.0, 2.8)
-            color = self.cfg.palette_magenta if self.rng.random() < 0.45 else self.cfg.palette_warm
+            color = self.dynamic_magenta if self.rng.random() < 0.60 else self.dynamic_warm
             self.sparkles.append(Sparkle(x, y, vx, vy, ttl, size, color))
 
     def update_sparkles(self, dt: float):
@@ -275,12 +336,16 @@ class DiscoVisualizer:
         self.tmp_surface.fill((0, 0, 0, 0))
         low = np.roll(self.haze_noise, int(t * 18) % self.haze_noise.shape[1], axis=1)
         low = np.roll(low, int(t * 9) % self.haze_noise.shape[0], axis=0)
+
         haze = ((low * 85) + 20).astype(np.uint8)
-        rgb = np.stack([
-            haze,
-            np.clip(haze * 0.6 + 20, 0, 255).astype(np.uint8),
-            np.clip(haze * 0.85 + 40, 0, 255).astype(np.uint8),
-        ], axis=2)
+        rgb = np.stack(
+            [
+                haze,
+                np.clip(haze * 0.60 + 20, 0, 255).astype(np.uint8),
+                np.clip(haze * 0.85 + 40, 0, 255).astype(np.uint8),
+            ],
+            axis=2,
+        )
         surf = pygame.surfarray.make_surface(np.transpose(rgb, (1, 0, 2)))
         surf = pygame.transform.smoothscale(surf, (WIDTH, HEIGHT))
         alpha = int(np.clip((35 + energy * 55) * self.cfg.haze_strength, 0, 120))
@@ -288,25 +353,35 @@ class DiscoVisualizer:
         self.tmp_surface.set_alpha(alpha)
         self.light_surface.blit(self.tmp_surface, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
 
-    def draw_rays(self, t: float, mids: float, highs: float, drop_mul: float):
-        origin = (int(self.cfg.origin_x * WIDTH), int(self.cfg.origin_y * HEIGHT))
+    def draw_rays(self, t: float, mids: float, highs: float, drop_mul: float, origin_norm: Tuple[float, float]):
+        origin = (int(origin_norm[0] * WIDTH), int(origin_norm[1] * HEIGHT))
         base_rot = t * self.cfg.ray_rotation_speed * math.tau
         ray_count = int(self.cfg.ray_count * (1.15 if drop_mul > 1.0 else 1.0))
         glint_angle = (t * 1.3) % math.tau
+
         for i in range(ray_count):
             frac = i / max(1, ray_count)
             angle = frac * math.tau + base_rot
             tile_mod = 0.55 + 0.45 * math.sin(58.0 * angle + t * 6.2)
             shimmer = 0.78 + self.cfg.ray_shimmer * 0.22 * math.sin((i * 0.9) + t * 12.0)
             glint = 1.0 + 1.35 * math.exp(-((math.atan2(math.sin(angle - glint_angle), math.cos(angle - glint_angle))) ** 2) / 0.03)
-            bright = self.cfg.ray_brightness * self.cfg.intensity_master * (0.2 + 0.7 * mids + 0.55 * highs) * tile_mod * shimmer * glint * drop_mul
+            bright = (
+                self.cfg.ray_brightness
+                * self.cfg.intensity_master
+                * (0.2 + 0.7 * mids + 0.55 * highs)
+                * tile_mod
+                * shimmer
+                * glint
+                * drop_mul
+            )
             if bright < 0.08:
                 continue
+
             length = int(WIDTH * self.cfg.ray_length * (0.55 + 0.45 * tile_mod))
             x2 = int(origin[0] + math.cos(angle) * length)
             y2 = int(origin[1] + math.sin(angle) * length)
-            c1 = self.cfg.palette_warm if (i % 7) < 4 else self.cfg.palette_magenta
-            color = tuple(min(255, int(ch * min(1.6, bright))) for ch in c1)
+            base = self.dynamic_warm if (i % 7) < 4 else self.dynamic_magenta
+            color = tuple(min(255, int(ch * min(1.6, bright))) for ch in base)
             alpha = min(240, int(44 + bright * 90))
             for k in range(3):
                 w = max(1, self.cfg.ray_thickness - k)
@@ -316,29 +391,33 @@ class DiscoVisualizer:
         strength = self.cfg.gobo_strength * mids * self.cfg.intensity_master
         if strength < 0.05:
             return
+
         spacing = 140
         ox = int((math.sin(t * self.cfg.gobo_speed) * 0.5 + 0.5) * spacing)
         oy = int((math.cos(t * self.cfg.gobo_speed * 1.3) * 0.5 + 0.5) * spacing)
-        col = (*self.cfg.palette_blue, int(min(110, 40 + strength * 70)))
+        col = (*self.dynamic_blue, int(min(110, 40 + strength * 70)))
+
         for y in range(oy, HEIGHT, spacing):
             for x in range(ox, WIDTH, spacing):
                 rad = int(6 + 6 * strength)
                 pygame.draw.circle(self.light_surface, col, (x, y), rad)
+
         for i in range(12):
             px = int((i / 12) * WIDTH)
             py = int((0.58 + 0.08 * math.sin(t * 0.8 + i)) * HEIGHT)
-            pygame.draw.line(self.light_surface, (*self.cfg.palette_magenta, int(35 + 55 * strength)), (px, py), (px + 60, py + 20), 2)
+            pygame.draw.line(self.light_surface, (*self.dynamic_magenta, int(35 + 55 * strength)), (px, py), (px + 60, py + 20), 2)
 
     def draw_lasers(self, t: float, bass: float, drop_mul: float):
         count = self.cfg.laser_count
         sweep = t * self.cfg.laser_speed * math.tau
         thickness = int(self.cfg.laser_thickness * (0.7 + bass * 1.2))
         bright = self.cfg.laser_brightness * self.cfg.intensity_master * (0.25 + bass * 1.2) * drop_mul
+
         for i in range(count):
             phase = i * math.tau / max(1, count)
             y1 = int((0.15 + 0.7 * ((math.sin(sweep + phase) + 1.0) * 0.5)) * HEIGHT)
             y2 = int((0.15 + 0.7 * ((math.sin(sweep + phase + 1.7) + 1.0) * 0.5)) * HEIGHT)
-            c = self.cfg.palette_blue if i % 2 == 0 else self.cfg.palette_magenta
+            c = self.dynamic_blue if i % 2 == 0 else self.dynamic_magenta
             alpha = int(min(220, 50 + bright * 80))
             for k in range(3):
                 w = max(1, thickness - k * 6)
@@ -348,10 +427,12 @@ class DiscoVisualizer:
         s = (bass * 0.8 + rms * 0.6) * self.cfg.floor_pulse_strength * self.cfg.intensity_master
         if s < 0.03:
             return
-        color = self.cfg.palette_warm
+
+        color = self.dynamic_warm
         radius_x = int(WIDTH * (0.45 + 0.15 * s))
         radius_y = int(120 + 160 * s)
         center = (WIDTH // 2, int(HEIGHT * 0.96))
+
         ellipse = pygame.Surface((radius_x * 2, radius_y * 2), pygame.SRCALPHA)
         for i in range(14, 0, -1):
             a = int((30 + 95 * s) * (i / 14))
@@ -361,6 +442,62 @@ class DiscoVisualizer:
                 (radius_x * (1 - i / 14), radius_y * (1 - i / 14), radius_x * 2 * i / 14, radius_y * 2 * i / 14),
             )
         self.light_surface.blit(ellipse, (center[0] - radius_x, center[1] - radius_y), special_flags=pygame.BLEND_RGBA_ADD)
+
+    def draw_floor_sweep(self, t: float, energy: float, bass: float):
+        strength = self.cfg.floor_sweep_strength * self.cfg.intensity_master * (0.18 + 0.85 * energy + 0.6 * bass)
+        if strength < 0.08:
+            return
+
+        sweep = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        base_alpha = int(min(120, 18 + strength * 62))
+        progress = (t * (0.20 + 0.7 * energy)) % 1.0
+        center_x = int(-WIDTH * 0.25 + progress * WIDTH * 1.5)
+        floor_top = int(HEIGHT * 0.70)
+
+        for i in range(9):
+            fade = 1.0 - i / 10.0
+            y0 = floor_top + i * 42
+            y1 = min(HEIGHT, y0 + 72)
+            x0 = center_x - 460 + i * 60
+            x1 = center_x + 460 + i * 80
+            poly = [(x0, y0), (x1, y0 + 28), (x1 + 140, y1), (x0 - 140, y1)]
+            color = (*self.dynamic_blue, int(base_alpha * fade))
+            pygame.draw.polygon(sweep, color, poly)
+
+        sweep = pygame.transform.smoothscale(pygame.transform.smoothscale(sweep, (WIDTH // 2, HEIGHT // 2)), (WIDTH, HEIGHT))
+        self.light_surface.blit(sweep, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+
+    def draw_crowd_shimmer(self, t: float, mids: float, highs: float):
+        crowd_y0 = int(self.cfg.crowd_y0 * HEIGHT)
+        crowd_y1 = int(self.cfg.crowd_y1 * HEIGHT)
+        if crowd_y1 <= crowd_y0:
+            return
+
+        shimmer_strength = self.cfg.crowd_shimmer_strength * self.cfg.intensity_master * (0.15 + 0.7 * mids + 0.55 * highs)
+        if shimmer_strength < 0.03:
+            return
+
+        noise = np.roll(self.crowd_noise, int(t * 28) % self.crowd_noise.shape[1], axis=1)
+        noise = np.roll(noise, int(t * 11) % self.crowd_noise.shape[0], axis=0)
+
+        h = max(4, crowd_y1 - crowd_y0)
+        row_idx = np.linspace(0, noise.shape[0] - 1, h).astype(int)
+        band = noise[row_idx]
+        lum = np.clip((band * 255.0 - 175.0) * 1.6, 0, 255).astype(np.uint8)
+
+        # subtle, non-blocky glitter lines in crowd area
+        rgb = np.stack(
+            [
+                (lum * 0.6).astype(np.uint8),
+                (lum * 0.35).astype(np.uint8),
+                lum,
+            ],
+            axis=2,
+        )
+        surf = pygame.surfarray.make_surface(np.transpose(rgb, (1, 0, 2)))
+        surf = pygame.transform.smoothscale(surf, (WIDTH, h))
+        surf.set_alpha(int(min(88, 24 + shimmer_strength * 95)))
+        self.light_surface.blit(surf, (0, crowd_y0), special_flags=pygame.BLEND_RGBA_ADD)
 
     def draw_sparkles(self):
         for p in self.sparkles:
@@ -372,11 +509,12 @@ class DiscoVisualizer:
             pygame.draw.line(self.light_surface, color, (int(p.x - size * 2), int(p.y)), (int(p.x + size * 2), int(p.y)), 1)
             pygame.draw.line(self.light_surface, color, (int(p.x), int(p.y - size * 2)), (int(p.x), int(p.y + size * 2)), 1)
 
-    def draw_lens_effects(self, t: float, peak: float):
+    def draw_lens_effects(self, peak: float, origin_norm: Tuple[float, float]):
         if peak < 0.86:
             return
-        c = self.cfg.palette_warm
-        origin = np.array([self.cfg.origin_x * WIDTH, self.cfg.origin_y * HEIGHT], dtype=np.float32)
+
+        c = self.dynamic_warm
+        origin = np.array([origin_norm[0] * WIDTH, origin_norm[1] * HEIGHT], dtype=np.float32)
         center = np.array([WIDTH * 0.5, HEIGHT * 0.5], dtype=np.float32)
         v = center - origin
         for mul, rad in [(0.4, 34), (0.8, 56), (1.2, 28)]:
@@ -385,14 +523,25 @@ class DiscoVisualizer:
             self.light_surface.blit(ghost, (int(p[0] - rad), int(p[1] - rad)), special_flags=pygame.BLEND_RGBA_ADD)
 
     def bloom_surface(self, src: pygame.Surface) -> pygame.Surface:
+        # Thresholded bloom: only bright pixels are extracted and blurred.
         if self.cfg.bloom_strength <= 0.01:
             return src
+
+        arr = pygame.surfarray.array3d(src).astype(np.float32)
+        lum = 0.2126 * arr[:, :, 0] + 0.7152 * arr[:, :, 1] + 0.0722 * arr[:, :, 2]
+        mask = np.clip((lum - float(self.cfg.bloom_threshold)) / max(1.0, 255.0 - self.cfg.bloom_threshold), 0.0, 1.0)
+        if float(mask.max()) < 0.01:
+            return src
+
+        bright_arr = (arr * mask[:, :, None]).astype(np.uint8)
+        bright = pygame.surfarray.make_surface(bright_arr)
         w2, h2 = WIDTH // 4, HEIGHT // 4
-        small = pygame.transform.smoothscale(src, (w2, h2))
-        blur = pygame.transform.smoothscale(small, (WIDTH, HEIGHT))
-        blur.set_alpha(int(180 * min(1.2, self.cfg.bloom_strength)))
+        blur = pygame.transform.smoothscale(bright, (w2, h2))
+        blur = pygame.transform.smoothscale(blur, (WIDTH, HEIGHT))
+
         out = src.copy()
-        out.blit(blur, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+        blur.set_alpha(int(220 * min(1.5, self.cfg.bloom_strength)))
+        out.blit(blur, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
         return out
 
     def maybe_trigger_modes(self, frame_i: int, t: float):
@@ -413,11 +562,12 @@ class DiscoVisualizer:
         lines = [
             f"Frame {frame_i}",
             f"Intensity {self.cfg.intensity_master:.2f}",
-            f"Bloom {self.cfg.bloom_strength:.2f}",
+            f"Bloom {self.cfg.bloom_strength:.2f} thr:{self.cfg.bloom_threshold}",
             f"Rays {self.cfg.ray_brightness:.2f}",
             f"Lasers {self.cfg.laser_brightness:.2f}",
             f"Sparkles {self.cfg.sparkle_density:.2f}",
             f"Origin ({self.cfg.origin_x:.3f}, {self.cfg.origin_y:.3f})",
+            f"Crowd y [{self.cfg.crowd_y0:.2f}, {self.cfg.crowd_y1:.2f}]",
         ]
         y = 20
         for line in lines:
@@ -446,18 +596,30 @@ class DiscoVisualizer:
 
         self.maybe_trigger_modes(frame_i, t)
         drop_mul = 1.35 if t < self.drop_until else 1.0
+        self.update_dynamic_palette(energy, drop_mul)
 
-        self.spawn_sparkles(highs, t)
+        # Realism upgrade: local origin wobble tied to highs. Base cfg origin stays unchanged.
+        wobble_amp = 0.001 + 0.003 * highs
+        wobble_x = wobble_amp * math.sin(t * 2.5 + highs * 5.0)
+        wobble_y = wobble_amp * math.cos(t * 2.1 + highs * 4.2)
+        origin_norm = (
+            max(0.0, min(1.0, self.cfg.origin_x + wobble_x)),
+            max(0.0, min(1.0, self.cfg.origin_y + wobble_y)),
+        )
+
+        self.spawn_sparkles(highs)
         self.update_sparkles(dt)
 
         self.light_surface.fill((0, 0, 0, 0))
         self.draw_haze(t, energy)
-        self.draw_rays(t, mids, highs, drop_mul)
+        self.draw_rays(t, mids, highs, drop_mul, origin_norm)
         self.draw_gobo(t, mids)
         self.draw_lasers(t, bass, drop_mul)
         self.draw_floor_pulse(bass, rms)
+        self.draw_floor_sweep(t, energy, bass)
+        self.draw_crowd_shimmer(t, mids, highs)
         self.draw_sparkles()
-        self.draw_lens_effects(t, peak)
+        self.draw_lens_effects(peak, origin_norm)
 
         lights = self.bloom_surface(self.light_surface)
         out = bg.copy()
@@ -473,7 +635,7 @@ class DiscoVisualizer:
         return out
 
 
-def clamp(v, lo, hi):
+def clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
@@ -492,7 +654,8 @@ def load_preset(path: str, cfg: Config):
         data = json.load(f)
     for k, v in data.items():
         if hasattr(cfg, k):
-            setattr(cfg, k, tuple(v) if isinstance(getattr(cfg, k), tuple) else v)
+            default = getattr(cfg, k)
+            setattr(cfg, k, tuple(v) if isinstance(default, tuple) else v)
     print(f"Loaded preset from {path}")
 
 
@@ -562,11 +725,11 @@ def run_preview(bg: pygame.Surface, audio_path: str, vis: DiscoVisualizer, total
     start = time.perf_counter()
 
     running = True
-    frame_i = 0
     while running:
         dt = clock.tick(FPS) / 1000.0
         elapsed = time.perf_counter() - start
         frame_i = min(total_frames - 1, int(elapsed * FPS))
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -600,16 +763,42 @@ def export_mp4(bg: pygame.Surface, audio_path: str, out_path: str, vis: DiscoVis
         return
 
     cmd = [
-        "ffmpeg", "-y",
-        "-f", "rawvideo", "-vcodec", "rawvideo",
-        "-pix_fmt", "rgb24", "-s", f"{WIDTH}x{HEIGHT}",
-        "-r", str(FPS), "-i", "-",
-        "-i", audio_path,
-        "-map", "0:v:0", "-map", "1:a:0",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "medium", "-crf", "18",
-        "-c:a", "aac", "-b:a", "320k", "-shortest",
+        "ffmpeg",
+        "-y",
+        "-f",
+        "rawvideo",
+        "-vcodec",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-s",
+        f"{WIDTH}x{HEIGHT}",
+        "-r",
+        str(FPS),
+        "-i",
+        "-",
+        "-i",
+        audio_path,
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-preset",
+        "medium",
+        "-crf",
+        "18",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "320k",
+        "-shortest",
         out_path,
     ]
+
     print(f"Exporting to {out_path} ({total_frames} frames)...")
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
 
@@ -621,8 +810,7 @@ def export_mp4(bg: pygame.Surface, audio_path: str, out_path: str, vis: DiscoVis
             arr = vis.rgb_split_if_needed(arr, vis.feature_at(i, "peak"))
             proc.stdin.write(arr.tobytes())
             if i % (FPS * 2) == 0:
-                pct = 100.0 * i / max(1, total_frames)
-                print(f"  {pct:5.1f}%")
+                print(f"  {100.0 * i / max(1, total_frames):5.1f}%")
     finally:
         if proc.stdin:
             proc.stdin.close()
@@ -712,8 +900,7 @@ def launch_ui() -> argparse.Namespace | None:
     tk.Checkbutton(root, text="Show HUD", variable=values["hud"]).place(x=170, y=345)
 
     def validate_and_close(chosen_mode: str):
-        audio = values["audio"].get().strip()
-        if not audio:
+        if not values["audio"].get().strip():
             messagebox.showerror("Missing audio", "Please select an audio file.")
             return
         mode["run"] = chosen_mode
@@ -723,11 +910,7 @@ def launch_ui() -> argparse.Namespace | None:
     tk.Button(root, text="Export MP4", command=lambda: validate_and_close("export"), bg="#8a2be2", fg="white").place(x=360, y=380, width=180)
     tk.Button(root, text="Cancel", command=root.destroy).place(x=550, y=380, width=135)
 
-    tk.Label(
-        root,
-        text="Tip: Leave Output MP4 empty for preview-only. For Export MP4, output path is recommended.",
-        anchor="w",
-    ).place(x=20, y=5, width=660)
+    tk.Label(root, text="Tip: Leave Output MP4 empty for preview-only. For Export MP4, output path is recommended.", anchor="w").place(x=20, y=5, width=660)
 
     root.mainloop()
 
@@ -738,7 +921,7 @@ def launch_ui() -> argparse.Namespace | None:
     if mode["run"] == "preview":
         out_path = ""
 
-    ns = argparse.Namespace(
+    return argparse.Namespace(
         audio=values["audio"].get().strip(),
         out=out_path or None,
         duration=float(values["duration"].get().strip()) if values["duration"].get().strip() else None,
@@ -750,7 +933,14 @@ def launch_ui() -> argparse.Namespace | None:
         bg=values["bg"].get().strip() or DEFAULT_BG_PATH,
         ui=True,
     )
-    return ns
+
+
+def ensure_display_for_surface_convert():
+    # Crash fix: convert() needs display mode in both preview and export paths.
+    try:
+        pygame.display.set_mode((1, 1), flags=pygame.HIDDEN)
+    except Exception:
+        pygame.display.set_mode((1, 1))
 
 
 def main():
@@ -786,7 +976,14 @@ def main():
         load_preset(args.preset, cfg)
 
     pygame.init()
-    bg = load_and_fit_background(args.bg)
+    ensure_display_for_surface_convert()
+
+    try:
+        bg = load_and_fit_background(args.bg)
+    except Exception as exc:
+        print(f"[ERROR] Could not load background: {exc}")
+        pygame.quit()
+        sys.exit(1)
 
     print("Analyzing audio (offline deterministic pass)...")
     features = analyze_audio(args.audio, FPS, args.duration)
@@ -796,12 +993,21 @@ def main():
     if args.save_preset:
         save_preset(args.save_preset, cfg)
 
-    if args.out:
-        export_mp4(bg, args.audio, args.out, vis, total_frames)
-    else:
-        run_preview(bg, args.audio, vis, total_frames)
-
-    pygame.quit()
+    ran_successfully = False
+    try:
+        if args.out:
+            export_mp4(bg, args.audio, args.out, vis, total_frames)
+        else:
+            run_preview(bg, args.audio, vis, total_frames)
+        ran_successfully = True
+    finally:
+        # Auto-save on normal run exit so user tweaks are preserved.
+        if ran_successfully:
+            try:
+                save_preset("last_preset.json", cfg)
+            except Exception as exc:
+                print(f"[WARNING] Could not auto-save last_preset.json: {exc}")
+        pygame.quit()
 
 
 if __name__ == "__main__":
