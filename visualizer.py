@@ -86,7 +86,7 @@ def write_crash_report(exc: Exception, args=None, cfg=None, extra=None) -> str:
 class Config:
     origin_x: float = 0.18
     origin_y: float = 0.18
-    intensity_master: float = 1.0
+    intensity_master: float = 0.70
 
     haze_strength: float = 0.22
 
@@ -103,20 +103,28 @@ class Config:
     laser_count: int = 4
     laser_speed: float = 0.55
     laser_thickness: int = 18
-    laser_brightness: float = 1.0
+    laser_brightness: float = 0.90
 
-    floor_pulse_strength: float = 0.80
+    floor_pulse_strength: float = 0.25
     floor_sweep_strength: float = 0.68
 
     sparkle_density: float = 1.0
     sparkle_size: float = 1.0
 
     # Tuning note: thresholded bloom. Raise bloom_threshold for less glow.
-    bloom_strength: float = 0.62
-    bloom_threshold: int = 168
+    bloom_strength: float = 0.30
+    bloom_threshold: int = 200
+    bloom_soft_knee: float = 0.15
 
-    strobe_strength: float = 0.80
+    strobe_strength: float = 0.35
     strobe_cooldown: float = 1.3
+
+
+    tonemap_enabled: bool = True
+    tonemap_mode: str = "reinhard"
+    tonemap_k: float = 0.55
+    tonemap_gamma: float = 1.15
+    exposure: float = 1.0
 
     drop_mode_sensitivity: float = 1.4
     drop_mode_duration: float = 6.0
@@ -142,6 +150,7 @@ def print_startup_guide() -> None:
     print("\nKeyboard controls in preview:")
     print("  [ / ] intensity | - / + bloom | 1/2 rays | 3/4 lasers | 5/6 sparkles")
     print("  O/P origin X | K/L origin Y | S save last_preset.json | H toggle HUD")
+    print("  ; / ' floor pulse | , / . strobe | T tonemap toggle")
     print("  F9 write debug snapshot JSON (for sharing issues)")
     print("  ESC or close window to quit preview\n")
 
@@ -418,6 +427,7 @@ class DiscoVisualizer:
                 * glint
                 * drop_mul
             )
+            bright = min(bright, 1.18)
             if bright < 0.08:
                 continue
 
@@ -456,6 +466,7 @@ class DiscoVisualizer:
         sweep = t * self.cfg.laser_speed * math.tau
         thickness = int(self.cfg.laser_thickness * (0.7 + bass * 1.2))
         bright = self.cfg.laser_brightness * self.cfg.intensity_master * (0.25 + bass * 1.2) * drop_mul
+        bright = min(bright, 1.2)
 
         for i in range(count):
             phase = i * math.tau / max(1, count)
@@ -473,17 +484,19 @@ class DiscoVisualizer:
             return
 
         color = self.dynamic_warm
-        radius_x = int(WIDTH * (0.45 + 0.15 * s))
-        radius_y = int(120 + 160 * s)
-        center = (WIDTH // 2, int(HEIGHT * 0.96))
+        radius_x = int(WIDTH * (0.42 + 0.11 * s))
+        radius_y = int(90 + 110 * s)
+        center = (WIDTH // 2, int(HEIGHT * 0.97))
 
         ellipse = pygame.Surface((radius_x * 2, radius_y * 2), pygame.SRCALPHA)
-        for i in range(14, 0, -1):
-            a = int((30 + 95 * s) * (i / 14))
+        for i in range(16, 0, -1):
+            ring = i / 16
+            vertical_fade = ring ** 2.2
+            a = int((12 + 62 * s) * vertical_fade)
             pygame.draw.ellipse(
                 ellipse,
                 (*color, a),
-                (radius_x * (1 - i / 14), radius_y * (1 - i / 14), radius_x * 2 * i / 14, radius_y * 2 * i / 14),
+                (radius_x * (1 - ring), radius_y * (1 - ring), radius_x * 2 * ring, radius_y * 2 * ring),
             )
         self.light_surface.blit(ellipse, (center[0] - radius_x, center[1] - radius_y), special_flags=pygame.BLEND_RGBA_ADD)
 
@@ -493,7 +506,7 @@ class DiscoVisualizer:
             return
 
         sweep = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        base_alpha = int(min(120, 18 + strength * 62))
+        base_alpha = int(min(88, 14 + strength * 48))
         progress = (t * (0.20 + 0.7 * energy)) % 1.0
         center_x = int(-WIDTH * 0.25 + progress * WIDTH * 1.5)
         floor_top = int(HEIGHT * 0.70)
@@ -567,24 +580,28 @@ class DiscoVisualizer:
             self.light_surface.blit(ghost, (int(p[0] - rad), int(p[1] - rad)), special_flags=pygame.BLEND_RGBA_ADD)
 
     def bloom_surface(self, src: pygame.Surface) -> pygame.Surface:
-        # Thresholded bloom: only bright pixels are extracted and blurred.
         if self.cfg.bloom_strength <= 0.01:
             return src
 
         arr = pygame.surfarray.array3d(src).astype(np.float32)
         lum = 0.2126 * arr[:, :, 0] + 0.7152 * arr[:, :, 1] + 0.0722 * arr[:, :, 2]
-        mask = np.clip((lum - float(self.cfg.bloom_threshold)) / max(1.0, 255.0 - self.cfg.bloom_threshold), 0.0, 1.0)
+        threshold = float(self.cfg.bloom_threshold)
+        knee = max(0.01, float(self.cfg.bloom_soft_knee))
+        knee_width = 255.0 * knee
+        soft = np.clip((lum - (threshold - knee_width)) / (knee_width + 1e-6), 0.0, 1.0)
+        hard = np.clip((lum - threshold) / max(1.0, 255.0 - threshold), 0.0, 1.0)
+        mask = np.maximum(hard, soft * 0.35)
         if float(mask.max()) < 0.01:
             return src
 
         bright_arr = (arr * mask[:, :, None]).astype(np.uint8)
         bright = pygame.surfarray.make_surface(bright_arr)
-        w2, h2 = WIDTH // 4, HEIGHT // 4
+        w2, h2 = WIDTH // 5, HEIGHT // 5
         blur = pygame.transform.smoothscale(bright, (w2, h2))
         blur = pygame.transform.smoothscale(blur, (WIDTH, HEIGHT))
 
         out = src.copy()
-        blur.set_alpha(int(220 * min(1.5, self.cfg.bloom_strength)))
+        blur.set_alpha(int(185 * min(1.2, self.cfg.bloom_strength)))
         out.blit(blur, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
         return out
 
@@ -607,6 +624,8 @@ class DiscoVisualizer:
             f"Frame {frame_i}",
             f"Intensity {self.cfg.intensity_master:.2f}",
             f"Bloom {self.cfg.bloom_strength:.2f} thr:{self.cfg.bloom_threshold}",
+            f"Floor {self.cfg.floor_pulse_strength:.2f} Strobe {self.cfg.strobe_strength:.2f}",
+            f"Tonemap {'ON' if self.cfg.tonemap_enabled else 'OFF'} {self.cfg.tonemap_mode}",
             f"Rays {self.cfg.ray_brightness:.2f}",
             f"Lasers {self.cfg.laser_brightness:.2f}",
             f"Sparkles {self.cfg.sparkle_density:.2f}",
@@ -628,6 +647,31 @@ class DiscoVisualizer:
         b = np.roll(frame[:, :, 2], -offset, axis=0)
         mixed = np.stack([r, g, b], axis=2)
         return np.clip(0.65 * frame + 0.35 * mixed, 0, 255).astype(np.uint8)
+
+    def apply_tonemap_array(self, frame: np.ndarray) -> np.ndarray:
+        if not self.cfg.tonemap_enabled:
+            return frame
+
+        x = frame.astype(np.float32)
+        x *= float(self.cfg.exposure)
+        x = np.clip(x, 0.0, 255.0)
+
+        if self.cfg.tonemap_mode == "gamma":
+            x = np.power(np.clip(x / 255.0, 0.0, 1.0), float(self.cfg.tonemap_gamma)) * 255.0
+        else:
+            x = np.clip(x / 255.0, 0.0, 10.0)
+            k = max(1e-4, float(self.cfg.tonemap_k))
+            x = x / (x + k)
+            x = x * 255.0
+
+        return np.clip(x, 0.0, 255.0).astype(np.uint8)
+
+    def apply_tonemap_surface(self, surf: pygame.Surface) -> pygame.Surface:
+        if not self.cfg.tonemap_enabled:
+            return surf
+        arr = pygame.surfarray.array3d(surf)
+        arr = self.apply_tonemap_array(arr)
+        return pygame.surfarray.make_surface(arr)
 
     def render_frame(self, bg: pygame.Surface, frame_i: int, dt: float) -> pygame.Surface:
         t = frame_i / FPS
@@ -670,12 +714,13 @@ class DiscoVisualizer:
         out.blit(lights, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
 
         if self.strobe_frames_left > 0:
-            flash = int(255 * self.cfg.strobe_strength)
+            flash = int(220 * self.cfg.strobe_strength)
             strobe = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-            strobe.fill((flash, flash, flash, 120))
+            strobe.fill((flash, flash, flash, min(90, int(35 + 85 * self.cfg.strobe_strength))))
             out.blit(strobe, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
             self.strobe_frames_left -= 1
 
+        out = self.apply_tonemap_surface(out)
         return out
 
 
@@ -774,6 +819,21 @@ def handle_key(event_key, cfg: Config, vis: DiscoVisualizer, args, frame_i: int)
         moved = True
     elif event_key == pygame.K_s:
         save_preset("last_preset.json", cfg)
+    elif event_key == pygame.K_SEMICOLON:
+        cfg.floor_pulse_strength = clamp(cfg.floor_pulse_strength - delta, 0.0, 1.2)
+        print_param("floor_pulse_strength", cfg.floor_pulse_strength)
+    elif event_key == pygame.K_QUOTE:
+        cfg.floor_pulse_strength = clamp(cfg.floor_pulse_strength + delta, 0.0, 1.2)
+        print_param("floor_pulse_strength", cfg.floor_pulse_strength)
+    elif event_key == pygame.K_COMMA:
+        cfg.strobe_strength = clamp(cfg.strobe_strength - delta, 0.0, 1.0)
+        print_param("strobe_strength", cfg.strobe_strength)
+    elif event_key == pygame.K_PERIOD:
+        cfg.strobe_strength = clamp(cfg.strobe_strength + delta, 0.0, 1.0)
+        print_param("strobe_strength", cfg.strobe_strength)
+    elif event_key == pygame.K_t:
+        cfg.tonemap_enabled = not cfg.tonemap_enabled
+        print(f"tonemap_enabled: {cfg.tonemap_enabled} (mode={cfg.tonemap_mode})")
     elif event_key == pygame.K_h:
         vis.hud = not vis.hud
         print(f"HUD: {'ON' if vis.hud else 'OFF'}")
