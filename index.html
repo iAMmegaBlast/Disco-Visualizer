@@ -46,7 +46,9 @@
         background: rgba(12, 10, 20, 0.78); color: #f7e9ff;
         border: 1px solid rgba(255,255,255,0.15); border-radius: 12px;
         padding: 12px; backdrop-filter: blur(8px);
+        transition: opacity 180ms ease;
       }
+      #ui.uiHidden { opacity: 0; pointer-events: none; }
       #ui h2 { margin: 0 0 8px 0; font-size: 16px; }
       .row { margin-bottom: 8px; }
       .row label { display: block; font-size: 12px; margin-bottom: 2px; }
@@ -87,7 +89,7 @@
       <div class="row"><label>Bloom Strength</label><input id="bloomStrength" type="range" min="0" max="2.5" step="0.01" value="1.2"/></div>
       <div class="row"><label>Disco Energy</label><input id="discoEnergy" type="range" min="0" max="2" step="0.01" value="1"/></div>
       <div class="row"><label>Laser Amount</label><input id="laserAmount" type="range" min="0" max="2" step="0.01" value="0.9"/></div>
-      <div class="row"><label>Spotlight Brightness</label><input id="spotBrightness" type="range" min="0" max="2" step="0.01" value="1"/></div>
+      <div class="row"><label>Intersection Glow</label><input id="spotBrightness" type="range" min="0" max="2" step="0.01" value="0.65"/></div>
       <div class="row"><label>EXTREME (Elegant → Club)</label><input id="extreme" type="range" min="0" max="1" step="0.01" value="0.35"/></div>
 
       <div class="row">

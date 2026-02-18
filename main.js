@@ -18,7 +18,7 @@ const ui = {
   bloomStrength: document.getElementById('bloomStrength'),
   discoEnergy: document.getElementById('discoEnergy'),
   laserAmount: document.getElementById('laserAmount'),
-  spotBrightness: document.getElementById('spotBrightness'),
+  interactionGlow: document.getElementById('spotBrightness'),
   extreme: document.getElementById('extreme'),
   cinematicMode: document.getElementById('cinematicMode'),
   clubMode: document.getElementById('clubMode'),
@@ -33,119 +33,97 @@ const ui = {
 
 const config = {
   masterIntensity: 1.0,
-  bloomStrength: 1.2,
+  bloomStrength: 1.0,
   discoEnergy: 1.0,
   laserAmount: 0.9,
-  spotlightBrightness: 1.0,
+  interactionGlow: 0.65,
   extreme: 0.35,
   cinematicMode: true,
   clubMode: false,
-  showHud: true
+  showHud: true,
+  dotCount: 420
 };
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x090612);
-scene.fog = new THREE.Fog(0x11061f, 18, 65);
+scene.background = new THREE.Color(0x000000);
+scene.fog = new THREE.Fog(0x050209, 22, 82);
 
-const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 200);
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 240);
 camera.position.set(0, 8.4, 19);
 camera.lookAt(0, 5, 0);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, alpha: false });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.95;
+renderer.toneMappingExposure = 0.86;
 app.appendChild(renderer.domElement);
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.95, 0.48, 0.62);
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.74, 0.42, 0.68);
 composer.addPass(bloomPass);
 
 const chromaPass = new ShaderPass({
-  uniforms: {
-    tDiffuse: { value: null },
-    amount: { value: 0.0 }
-  },
-  vertexShader: `
-    varying vec2 vUv;
-    void main() {
-      vUv = uv;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }
-  `,
+  uniforms: { tDiffuse: { value: null }, amount: { value: 0.0 } },
+  vertexShader: `varying vec2 vUv; void main(){vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
   fragmentShader: `
     uniform sampler2D tDiffuse;
     uniform float amount;
     varying vec2 vUv;
-    void main() {
-      vec2 shift = amount * vec2(0.003, 0.002);
-      float r = texture2D(tDiffuse, vUv + shift).r;
-      float g = texture2D(tDiffuse, vUv).g;
-      float b = texture2D(tDiffuse, vUv - shift).b;
-      gl_FragColor = vec4(r, g, b, 1.0);
+    void main(){
+      vec2 shift=amount*vec2(0.0024,0.0017);
+      float r=texture2D(tDiffuse,vUv+shift).r;
+      float g=texture2D(tDiffuse,vUv).g;
+      float b=texture2D(tDiffuse,vUv-shift).b;
+      gl_FragColor=vec4(r,g,b,1.0);
     }
   `
 });
 composer.addPass(chromaPass);
 
-const ambient = new THREE.AmbientLight(0x2f2038, 0.3);
-scene.add(ambient);
-
-const hazeGeo = new THREE.SphereGeometry(52, 32, 16);
-const hazeMat = new THREE.MeshBasicMaterial({
-  color: 0x531f77,
-  transparent: true,
-  opacity: 0.06,
-  side: THREE.BackSide,
-  depthWrite: false
+const finalClampPass = new ShaderPass({
+  uniforms: { tDiffuse: { value: null }, maxChannel: { value: 245 / 255 } },
+  vertexShader: `varying vec2 vUv; void main(){vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float maxChannel;
+    varying vec2 vUv;
+    void main(){
+      vec3 col = texture2D(tDiffuse, vUv).rgb;
+      col = col / (1.0 + col * 0.45);
+      col = min(col, vec3(maxChannel));
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `
 });
-const haze = new THREE.Mesh(hazeGeo, hazeMat);
-scene.add(haze);
-
-const BG_IMAGE_PATH = '/mnt/data/dancefloor_daimyo_bg_upscaled_1920x1080.png';
-const textureLoader = new THREE.TextureLoader();
-const bgTexture = textureLoader.load(
-  BG_IMAGE_PATH,
-  undefined,
-  undefined,
-  () => setStatus(`Background image not found at ${BG_IMAGE_PATH}. Please place it there.`)
-);
-bgTexture.colorSpace = THREE.SRGBColorSpace;
-const bgPlane = new THREE.Mesh(
-  new THREE.PlaneGeometry(42, 23.625),
-  new THREE.MeshBasicMaterial({ map: bgTexture, toneMapped: false, depthWrite: false, depthTest: false })
-);
-bgPlane.position.set(0, 8.8, -22);
-bgPlane.renderOrder = -10;
-scene.add(bgPlane);
+composer.addPass(finalClampPass);
 
 const floor = new THREE.Mesh(
-  new THREE.PlaneGeometry(50, 36, 1, 1),
+  new THREE.PlaneGeometry(70, 52, 1, 1),
   new THREE.MeshPhysicalMaterial({
-    color: 0x1d1024,
-    metalness: 0.48,
-    roughness: 0.3,
-    clearcoat: 0.9,
-    clearcoatRoughness: 0.2,
-    emissive: 0x130717,
-    emissiveIntensity: 0.18
+    color: 0x120812,
+    metalness: 0.38,
+    roughness: 0.38,
+    clearcoat: 0.8,
+    clearcoatRoughness: 0.25,
+    emissive: 0x160716,
+    emissiveIntensity: 0.14
   })
 );
 floor.rotation.x = -Math.PI / 2;
-floor.position.y = -1.15;
+floor.position.y = -1.2;
 scene.add(floor);
 
-const dotCount = 560;
+const dotCount = config.dotCount;
 const dotsGeo = new THREE.BufferGeometry();
 const dotPositions = new Float32Array(dotCount * 3);
 const dotColors = new Float32Array(dotCount * 3);
 const dotSizes = new Float32Array(dotCount);
 const dotTwinkles = new Float32Array(dotCount);
 
-const dotBaseRadius = new Float32Array(dotCount);
+const dotRadius = new Float32Array(dotCount);
 const dotAngle = new Float32Array(dotCount);
 const dotHeight = new Float32Array(dotCount);
 const dotSeed = new Float32Array(dotCount);
@@ -153,18 +131,17 @@ const dotPop = new Float32Array(dotCount);
 const dotCooldown = new Float32Array(dotCount);
 
 for (let i = 0; i < dotCount; i++) {
-  dotBaseRadius[i] = 1.5 + Math.pow(Math.random(), 0.72) * 13.5;
+  dotRadius[i] = 2.4 + Math.pow(Math.random(), 0.76) * 14.8;
   dotAngle[i] = Math.random() * Math.PI * 2;
-  dotHeight[i] = -1.1 + (Math.random() - 0.5) * 10.8;
+  dotHeight[i] = -1.3 + (Math.random() - 0.5) * 11.2;
   dotSeed[i] = Math.random();
-  dotSizes[i] = 18 + Math.random() * 25;
-  dotTwinkles[i] = 0.3;
+  dotSizes[i] = 10 + Math.random() * 18;
+  dotTwinkles[i] = 0.35;
 
-  const warm = new THREE.Color().setHSL(0.12 + Math.random() * 0.08, 0.9, 0.58);
-  const magenta = new THREE.Color().setHSL(0.86 + Math.random() * 0.06, 0.8, 0.54);
-  const mix = 0.4 + Math.random() * 0.6;
-  const color = warm.lerp(magenta, mix * 0.52);
-  dotColors[i * 3 + 0] = color.r;
+  const warm = new THREE.Color().setHSL(0.115 + Math.random() * 0.05, 0.88, 0.52);
+  const magenta = new THREE.Color().setHSL(0.89 + Math.random() * 0.05, 0.74, 0.5);
+  const color = warm.lerp(magenta, 0.38 + Math.random() * 0.5);
+  dotColors[i * 3] = color.r;
   dotColors[i * 3 + 1] = color.g;
   dotColors[i * 3 + 2] = color.b;
 }
@@ -174,66 +151,71 @@ dotsGeo.setAttribute('aColor', new THREE.BufferAttribute(dotColors, 3));
 dotsGeo.setAttribute('aSize', new THREE.BufferAttribute(dotSizes, 1));
 dotsGeo.setAttribute('aTwinkle', new THREE.BufferAttribute(dotTwinkles, 1));
 
+const pointVs = `
+attribute vec3 aColor;
+attribute float aSize;
+attribute float aTwinkle;
+varying vec3 vColor;
+varying float vTwinkle;
+uniform float uPixelRatio;
+void main(){
+  vec4 mvPosition = modelViewMatrix * vec4(position,1.0);
+  gl_Position = projectionMatrix * mvPosition;
+  gl_PointSize = aSize * uPixelRatio * (145.0 / -mvPosition.z);
+  vColor = aColor;
+  vTwinkle = aTwinkle;
+}`;
+
+const pointFs = `
+uniform float uIntensity;
+varying vec3 vColor;
+varying float vTwinkle;
+void main(){
+  vec2 p = gl_PointCoord - vec2(0.5);
+  float d = length(p) * 2.0;
+  float body = smoothstep(1.0, 0.0, d);
+  float core = smoothstep(0.42, 0.0, d);
+  float alpha = body * (0.16 + 0.6 * vTwinkle);
+  vec3 col = vColor * (0.48 + core * 0.62 + vTwinkle * 0.34) * uIntensity;
+  col = min(col, vec3(0.94));
+  gl_FragColor = vec4(col, alpha);
+}`;
+
 const dotsMat = new THREE.ShaderMaterial({
   uniforms: {
     uPixelRatio: { value: renderer.getPixelRatio() },
-    uIntensity: { value: 1.0 }
+    uIntensity: { value: 0.88 }
   },
-  vertexShader: `
-    attribute vec3 aColor;
-    attribute float aSize;
-    attribute float aTwinkle;
-    varying vec3 vColor;
-    varying float vTwinkle;
-    void main() {
-      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-      gl_Position = projectionMatrix * mvPosition;
-      gl_PointSize = aSize * uPixelRatio * (150.0 / -mvPosition.z);
-      vColor = aColor;
-      vTwinkle = aTwinkle;
-    }
-  `,
-  fragmentShader: `
-    uniform float uIntensity;
-    varying vec3 vColor;
-    varying float vTwinkle;
-    void main() {
-      vec2 p = gl_PointCoord - vec2(0.5);
-      float d = length(p) * 2.0;
-      float body = smoothstep(1.0, 0.0, d);
-      float core = smoothstep(0.45, 0.0, d);
-      float alpha = body * (0.18 + vTwinkle * 0.75);
-      vec3 col = vColor * (0.55 + core * 0.8 + vTwinkle * 0.55) * uIntensity;
-      gl_FragColor = vec4(col, alpha);
-    }
-  `,
+  vertexShader: pointVs,
+  fragmentShader: pointFs,
   transparent: true,
   depthWrite: false,
   blending: THREE.AdditiveBlending
 });
+
 const dotPoints = new THREE.Points(dotsGeo, dotsMat);
-dotPoints.position.set(0, 6.4, -4.0);
+dotPoints.position.set(0, 6.2, -4.5);
 scene.add(dotPoints);
 
-const sparkMax = 1300;
+const sparkMax = 1100;
 const sparkGeo = new THREE.BufferGeometry();
-const sparkPositions = new Float32Array(sparkMax * 3);
-const sparkSizes = new Float32Array(sparkMax);
-const sparkColors = new Float32Array(sparkMax * 3);
-const sparkTwinkles = new Float32Array(sparkMax);
+const sparkPos = new Float32Array(sparkMax * 3);
+const sparkCol = new Float32Array(sparkMax * 3);
+const sparkSize = new Float32Array(sparkMax);
+const sparkTwinkle = new Float32Array(sparkMax);
 const sparkVel = new Float32Array(sparkMax * 3);
 const sparkLife = new Float32Array(sparkMax);
 let sparkWrite = 0;
 
-sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPositions, 3));
-sparkGeo.setAttribute('aColor', new THREE.BufferAttribute(sparkColors, 3));
-sparkGeo.setAttribute('aSize', new THREE.BufferAttribute(sparkSizes, 1));
-sparkGeo.setAttribute('aTwinkle', new THREE.BufferAttribute(sparkTwinkles, 1));
+sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3));
+sparkGeo.setAttribute('aColor', new THREE.BufferAttribute(sparkCol, 3));
+sparkGeo.setAttribute('aSize', new THREE.BufferAttribute(sparkSize, 1));
+sparkGeo.setAttribute('aTwinkle', new THREE.BufferAttribute(sparkTwinkle, 1));
 
 const sparksMat = dotsMat.clone();
 sparksMat.uniforms = {
   uPixelRatio: { value: renderer.getPixelRatio() },
-  uIntensity: { value: 1.0 }
+  uIntensity: { value: 0.78 }
 };
 const sparks = new THREE.Points(sparkGeo, sparksMat);
 sparks.position.copy(dotPoints.position);
@@ -249,8 +231,8 @@ const laserSegments = Array.from({ length: laserMax }, () => ({
   b: new THREE.Vector2(),
   intensity: 0
 }));
-const laserPalette = [0xff70c4, 0xffb35f, 0xdc6fff, 0xff9ea0, 0xff74ff, 0xf7bb63, 0xff63a7, 0xf79bf8];
 
+const laserPalette = [0xff69be, 0xf7aa68, 0xeb6ef2, 0xf69c9f, 0xe981f2, 0xf0bb74, 0xf36ca4, 0xe19cf0];
 for (let i = 0; i < laserMax; i++) {
   const mat = new THREE.MeshBasicMaterial({
     color: laserPalette[i],
@@ -259,15 +241,35 @@ for (let i = 0; i < laserMax; i++) {
     blending: THREE.AdditiveBlending,
     depthWrite: false
   });
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(18, 0.09), mat);
-  mesh.position.set(0, 6, -6.2 + i * 0.02);
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 0.09), mat);
   laserGroup.add(mesh);
   laserMeshes.push(mesh);
 }
 
-const clock = new THREE.Clock();
+const intersectionMax = 28;
+const intersectionGeo = new THREE.BufferGeometry();
+const ixPos = new Float32Array(intersectionMax * 3);
+const ixCol = new Float32Array(intersectionMax * 3);
+const ixSize = new Float32Array(intersectionMax);
+const ixTw = new Float32Array(intersectionMax);
+intersectionGeo.setAttribute('position', new THREE.BufferAttribute(ixPos, 3));
+intersectionGeo.setAttribute('aColor', new THREE.BufferAttribute(ixCol, 3));
+intersectionGeo.setAttribute('aSize', new THREE.BufferAttribute(ixSize, 1));
+intersectionGeo.setAttribute('aTwinkle', new THREE.BufferAttribute(ixTw, 1));
+
+const intersectionMat = dotsMat.clone();
+intersectionMat.uniforms = {
+  uPixelRatio: { value: renderer.getPixelRatio() },
+  uIntensity: { value: 0.62 }
+};
+const intersectionPoints = new THREE.Points(intersectionGeo, intersectionMat);
+intersectionPoints.position.set(0, 0, -5.2);
+scene.add(intersectionPoints);
+
 const tempColor = new THREE.Color();
-const tempVec2 = new THREE.Vector2();
+const temp2A = new THREE.Vector2();
+const temp2B = new THREE.Vector2();
+const clock = new THREE.Clock();
 
 let currentLaserMode = 0;
 let laserModeTime = 0;
@@ -301,16 +303,28 @@ const audioState = {
   smoothMid: 0,
   smoothHigh: 0,
   smoothRms: 0,
-  mode: { calm: 1, drive: 0, surge: 0 },
   modeDisplay: 'CALM'
 };
 
 let isFullscreen = false;
-let lastMouseMoveMs = performance.now();
-let uiHiddenForIdle = false;
+let hideUiTimer = null;
 
 function setStatus(text) {
   ui.status.textContent = text;
+}
+
+function scheduleUiHide() {
+  if (!isFullscreen) return;
+  clearTimeout(hideUiTimer);
+  hideUiTimer = setTimeout(() => {
+    ui.panel.classList.add('uiHidden');
+    renderer.domElement.style.cursor = 'none';
+  }, 1500);
+}
+
+function showUiImmediate() {
+  ui.panel.classList.remove('uiHidden');
+  renderer.domElement.style.cursor = '';
 }
 
 function setupAudioContext() {
@@ -397,108 +411,102 @@ function analyzeAudio(dt) {
 
   const rise = Math.max(0, rms - audioState.prevRms);
   audioState.prevRms = rms;
-  audioState.onset = THREE.MathUtils.lerp(audioState.onset, Math.min(1, rise * 8.4 + high * 0.28), 0.22);
+  audioState.onset = THREE.MathUtils.lerp(audioState.onset, Math.min(1, rise * 8.0 + high * 0.22), 0.22);
 
-  const agcTarget = 0.42;
+  const agcTarget = 0.43;
   const gainNow = THREE.MathUtils.clamp(agcTarget / Math.max(0.08, rms), 0.55, 1.9);
   audioState.agc = THREE.MathUtils.lerp(audioState.agc, gainNow, 0.1);
   const rmsAgc = THREE.MathUtils.clamp(rms * audioState.agc, 0, 2);
-  audioState.compressed = rmsAgc / (rmsAgc + 0.8);
+  audioState.compressed = rmsAgc / (rmsAgc + 0.82);
 
   const smoothA = 1 - Math.exp(-dt / 0.13);
+  audioState.bass = bass;
+  audioState.mid = mid;
+  audioState.high = high;
+  audioState.rms = rms;
   audioState.smoothBass += (bass - audioState.smoothBass) * smoothA;
   audioState.smoothMid += (mid - audioState.smoothMid) * smoothA;
   audioState.smoothHigh += (high - audioState.smoothHigh) * smoothA;
   audioState.smoothRms += (audioState.compressed - audioState.smoothRms) * (1 - Math.exp(-dt / 0.18));
-}
 
-function updateStateDirector(dt) {
-  const calmTarget = THREE.MathUtils.clamp(1.0 - (audioState.smoothRms * 1.6 + audioState.smoothMid * 0.7), 0, 1);
-  const driveTarget = THREE.MathUtils.clamp(audioState.smoothMid * 1.35 + audioState.smoothRms * 0.5, 0, 1);
-  const surgeTarget = THREE.MathUtils.clamp(audioState.smoothBass * 1.2 + audioState.onset * 0.9, 0, 1);
-
-  const blend = 1 - Math.exp(-dt / 0.22);
-  audioState.mode.calm += (calmTarget - audioState.mode.calm) * blend;
-  audioState.mode.drive += (driveTarget - audioState.mode.drive) * blend;
-  audioState.mode.surge += (surgeTarget - audioState.mode.surge) * blend;
-
-  const sum = audioState.mode.calm + audioState.mode.drive + audioState.mode.surge || 1;
-  audioState.mode.calm /= sum;
-  audioState.mode.drive /= sum;
-  audioState.mode.surge /= sum;
-
-  let modeName = 'CALM';
-  if (audioState.mode.drive > audioState.mode.calm && audioState.mode.drive >= audioState.mode.surge) modeName = 'DRIVE';
-  if (audioState.mode.surge > audioState.mode.drive && audioState.mode.surge > audioState.mode.calm) modeName = 'SURGE';
-  audioState.modeDisplay = modeName;
+  const e = audioState.smoothRms;
+  audioState.modeDisplay = e < 0.3 ? 'CALM' : e < 0.58 ? 'DRIVE' : 'SURGE';
   ui.stateText.textContent = `State: ${audioState.modeDisplay}`;
-}
-
-function distancePointToSegment(p, a, b) {
-  tempVec2.copy(b).sub(a);
-  const lenSq = Math.max(1e-6, tempVec2.lengthSq());
-  const t = THREE.MathUtils.clamp(((p.x - a.x) * tempVec2.x + (p.y - a.y) * tempVec2.y) / lenSq, 0, 1);
-  const px = a.x + tempVec2.x * t;
-  const py = a.y + tempVec2.y * t;
-  const dx = p.x - px;
-  const dy = p.y - py;
-  return Math.sqrt(dx * dx + dy * dy);
 }
 
 function emitSparkBurst(x, y, z, baseColor, amount) {
   for (let s = 0; s < amount; s++) {
     const idx = sparkWrite;
     sparkWrite = (sparkWrite + 1) % sparkMax;
-
     const ang = Math.random() * Math.PI * 2;
-    const spd = 0.7 + Math.random() * 2.3;
-    sparkPositions[idx * 3 + 0] = x;
-    sparkPositions[idx * 3 + 1] = y;
-    sparkPositions[idx * 3 + 2] = z;
-    sparkVel[idx * 3 + 0] = Math.cos(ang) * spd;
-    sparkVel[idx * 3 + 1] = Math.sin(ang) * spd;
-    sparkVel[idx * 3 + 2] = (Math.random() - 0.5) * 0.5;
-    sparkLife[idx] = 0.12 + Math.random() * 0.26;
-    sparkSizes[idx] = 7 + Math.random() * 12;
-    sparkTwinkles[idx] = 0.6 + Math.random() * 0.4;
+    const spd = 0.6 + Math.random() * 1.8;
 
-    tempColor.copy(baseColor).offsetHSL((Math.random() - 0.5) * 0.04, 0.05, 0.08);
-    sparkColors[idx * 3 + 0] = tempColor.r;
-    sparkColors[idx * 3 + 1] = tempColor.g;
-    sparkColors[idx * 3 + 2] = tempColor.b;
+    sparkPos[idx * 3] = x;
+    sparkPos[idx * 3 + 1] = y;
+    sparkPos[idx * 3 + 2] = z;
+    sparkVel[idx * 3] = Math.cos(ang) * spd;
+    sparkVel[idx * 3 + 1] = Math.sin(ang) * spd;
+    sparkVel[idx * 3 + 2] = (Math.random() - 0.5) * 0.35;
+    sparkLife[idx] = 0.12 + Math.random() * 0.2;
+    sparkSize[idx] = 5 + Math.random() * 8;
+    sparkTwinkle[idx] = 0.5 + Math.random() * 0.35;
+
+    tempColor.copy(baseColor).offsetHSL((Math.random() - 0.5) * 0.03, 0.04, 0.05);
+    sparkCol[idx * 3] = tempColor.r;
+    sparkCol[idx * 3 + 1] = tempColor.g;
+    sparkCol[idx * 3 + 2] = tempColor.b;
   }
 }
 
-function updateSwirlDots(dt, elapsed) {
-  const bassPush = 0.65 + audioState.smoothBass * 1.05;
-  const swirlSpeed = (0.18 + audioState.smoothMid * 1.85) * (0.7 + config.discoEnergy * 0.6);
-  const highTwinkle = THREE.MathUtils.clamp(0.2 + audioState.smoothHigh * 1.2, 0.2, 1.25);
-  const sizePulse = 1 + audioState.smoothHigh * 0.24 + audioState.onset * 0.12;
+function updateSwirlDots(dt, t) {
+  const bassPush = 0.66 + audioState.smoothBass * 1.05;
+  const swirlSpeed = 0.22 + audioState.smoothMid * 1.6;
+  const highTwinkleBoost = 0.22 + audioState.smoothHigh * 1.0;
+  const sizePulse = 1 + audioState.smoothHigh * 0.16 + audioState.onset * 0.1;
 
   for (let i = 0; i < dotCount; i++) {
-    dotAngle[i] += dt * swirlSpeed * (0.52 + dotSeed[i] * 1.1);
-    const wobble = 1 + 0.17 * Math.sin(elapsed * (0.4 + dotSeed[i] * 1.2) + dotSeed[i] * 12.0);
-    const radius = dotBaseRadius[i] * bassPush * wobble + audioState.onset * (0.35 + dotSeed[i] * 1.2);
+    dotAngle[i] += dt * swirlSpeed * (0.55 + dotSeed[i] * 1.0);
+    const wobble = 1 + 0.14 * Math.sin(t * (0.35 + dotSeed[i] * 1.1) + dotSeed[i] * 12.0);
+    const radius = dotRadius[i] * bassPush * wobble;
 
-    const flowAngle = dotAngle[i] + Math.sin(elapsed * 0.28 + dotSeed[i] * 8.0) * 0.3;
-    dotPositions[i * 3 + 0] = Math.cos(flowAngle) * radius;
-    dotPositions[i * 3 + 1] = dotHeight[i] + Math.sin(flowAngle * 1.8 + elapsed * 0.6 + dotSeed[i] * 6.0) * 0.75;
-    dotPositions[i * 3 + 2] = Math.sin(flowAngle * 0.72 + elapsed * 0.3) * 1.9;
+    const flowAngle = dotAngle[i] + Math.sin(t * 0.25 + dotSeed[i] * 8.0) * 0.3;
+    dotPositions[i * 3] = Math.cos(flowAngle) * radius;
+    dotPositions[i * 3 + 1] = dotHeight[i] + Math.sin(flowAngle * 1.7 + t * 0.52 + dotSeed[i] * 6.0) * 0.7;
+    dotPositions[i * 3 + 2] = Math.sin(flowAngle * 0.8 + t * 0.3) * 1.8;
 
     dotCooldown[i] = Math.max(0, dotCooldown[i] - dt);
     dotPop[i] = Math.max(0, dotPop[i] - dt * 4.8);
-
-    dotTwinkles[i] = 0.25 + highTwinkle * (0.25 + 0.75 * Math.abs(Math.sin(elapsed * (4.5 + dotSeed[i] * 6.8) + dotSeed[i] * 18.0)));
-    dotSizes[i] = (14 + dotBaseRadius[i] * 1.1) * sizePulse * (1 + dotPop[i] * 0.9);
+    dotTwinkles[i] = 0.28 + highTwinkleBoost * (0.22 + 0.58 * Math.abs(Math.sin(t * (4 + dotSeed[i] * 5.5) + dotSeed[i] * 18.0)));
+    dotSizes[i] = (9 + dotRadius[i] * 0.92) * sizePulse * (1 + dotPop[i] * 0.8);
   }
 
   dotsGeo.attributes.position.needsUpdate = true;
   dotsGeo.attributes.aSize.needsUpdate = true;
   dotsGeo.attributes.aTwinkle.needsUpdate = true;
-  dotsMat.uniforms.uIntensity.value = 0.88 + audioState.smoothRms * 0.95;
+  dotsMat.uniforms.uIntensity.value = THREE.MathUtils.clamp(0.7 + audioState.smoothRms * 0.55, 0.6, 0.98);
 }
 
-function updateLasers(dt, elapsed) {
+function worldScreenBoundsAtZ(zPlane) {
+  const depth = Math.abs(camera.position.z - zPlane);
+  const h = 2 * Math.tan((camera.fov * Math.PI / 180) / 2) * depth;
+  const w = h * camera.aspect;
+  return { w, h, diagonal: Math.sqrt(w * w + h * h) };
+}
+
+function lineIntersection(a1, a2, b1, b2) {
+  const s1x = a2.x - a1.x;
+  const s1y = a2.y - a1.y;
+  const s2x = b2.x - b1.x;
+  const s2y = b2.y - b1.y;
+  const denom = (-s2x * s1y + s1x * s2y);
+  if (Math.abs(denom) < 1e-5) return null;
+  const s = (-s1y * (a1.x - b1.x) + s1x * (a1.y - b1.y)) / denom;
+  const t = (s2x * (a1.y - b1.y) - s2y * (a1.x - b1.x)) / denom;
+  if (s >= 0 && s <= 1 && t >= 0 && t <= 1) return new THREE.Vector2(a1.x + (t * s1x), a1.y + (t * s1y));
+  return null;
+}
+
+function updateLasers(dt, t) {
   laserModeTime += dt;
   if (laserModeTime >= laserModeDuration) {
     laserModeTime = 0;
@@ -506,17 +514,17 @@ function updateLasers(dt, elapsed) {
     currentLaserMode = (currentLaserMode + 1) % LASER_MODES.length;
   }
 
+  const bounds = worldScreenBoundsAtZ(-5.3);
+  const screenSpan = bounds.diagonal * 3.0; // always edge-to-edge and beyond
+
   const mode = LASER_MODES[currentLaserMode];
-  const energy = audioState.smoothRms;
-  const activeCount = THREE.MathUtils.clamp(Math.round(3 + audioState.smoothMid * 5 + energy * 1.5), 3, laserMax);
-  const baseSpeed = 0.25 + audioState.smoothMid * 1.3 + config.extreme * 0.5;
-  const baseLen = 14.5 + energy * 6.8;
-  const onsetSnap = audioState.onset > 0.33 ? (Math.random() - 0.5) * 0.09 : 0;
+  const activeCount = THREE.MathUtils.clamp(Math.round(3 + audioState.smoothMid * 4 + audioState.smoothRms * 2), 3, laserMax);
+  const speed = 0.2 + audioState.smoothMid * 1.25 + config.extreme * 0.45;
+  const onsetSnap = audioState.onset > 0.34 ? (Math.random() - 0.5) * 0.07 : 0;
 
   for (let i = 0; i < laserMax; i++) {
     const mesh = laserMeshes[i];
     const seg = laserSegments[i];
-
     if (i >= activeCount) {
       mesh.material.opacity = 0;
       seg.active = false;
@@ -526,141 +534,160 @@ function updateLasers(dt, elapsed) {
     const n = activeCount <= 1 ? 0 : i / (activeCount - 1);
     let angle = 0;
     if (mode === 'fan') {
-      const sweep = Math.sin((elapsed + i * 0.08) * (0.6 + baseSpeed)) * 0.65;
-      angle = THREE.MathUtils.lerp(-0.95, 0.95, n) + sweep * 0.25;
+      angle = THREE.MathUtils.lerp(-0.95, 0.95, n) + Math.sin((t + i * 0.1) * (0.58 + speed)) * 0.2;
     } else if (mode === 'crisscross') {
       const dir = i % 2 ? 1 : -1;
-      angle = dir * (0.42 + 0.43 * Math.sin(elapsed * (0.8 + baseSpeed * 0.7) + n * 8.0));
+      angle = dir * (0.44 + 0.35 * Math.sin(t * (0.72 + speed * 0.7) + n * 8.0));
     } else if (mode === 'triangle') {
-      const triCorner = (elapsed * (0.36 + baseSpeed * 0.3) + n * Math.PI * 2) % (Math.PI * 2);
-      angle = triCorner + (Math.PI / 3) * Math.round((i % 3)) + Math.sin(elapsed * 0.5 + n * 7.0) * 0.16;
+      angle = (t * (0.34 + speed * 0.26) + (i % 3) * (Math.PI / 3)) % (Math.PI * 2);
     } else {
-      angle = Math.sin(elapsed * (0.45 + baseSpeed * 0.35) + n * 9.0) * 1.05;
+      angle = Math.sin(t * (0.42 + speed * 0.3) + n * 9.0) * 1.02;
     }
-
     angle += onsetSnap;
-    const y = 1.8 + n * 7.8 + Math.sin(elapsed * 0.5 + i * 1.2) * 0.4;
-    const x = Math.sin(elapsed * 0.23 + i * 0.9) * 1.5;
 
-    const bassPunch = 1 + audioState.smoothBass * 1.4 + audioState.onset * 0.8;
-    const thickness = (0.055 + 0.06 * bassPunch) * config.laserAmount * (0.86 + config.spotlightBrightness * 0.22);
-    const highFlicker = 0.9 + 0.28 * audioState.smoothHigh * Math.sin(elapsed * (22 + i * 3.1));
-    const brightness = THREE.MathUtils.clamp((0.16 + energy * 0.5 + audioState.smoothMid * 0.35) * highFlicker * config.masterIntensity, 0.08, 0.72);
+    const cx = Math.sin(t * 0.2 + i * 0.8) * (bounds.w * 0.16);
+    const cy = THREE.MathUtils.lerp(-bounds.h * 0.35, bounds.h * 0.35, n) + Math.sin(t * 0.4 + i * 1.2) * 0.3;
 
-    mesh.position.set(x, y, -6.15 + i * 0.012);
+    const bassPunch = 1 + audioState.smoothBass * 1.1 + audioState.onset * 0.7;
+    const thickness = (0.05 + 0.05 * bassPunch) * config.laserAmount;
+    const highShimmer = 0.88 + 0.2 * audioState.smoothHigh * Math.sin(t * (19 + i * 2.3));
+    const bright = THREE.MathUtils.clamp((0.12 + audioState.smoothRms * 0.35 + audioState.smoothMid * 0.22) * highShimmer * config.masterIntensity, 0.07, 0.42);
+
+    mesh.position.set(cx, cy, -5.3 + i * 0.01);
     mesh.rotation.z = angle;
-    mesh.scale.set(baseLen / 18, thickness / 0.09, 1);
-    mesh.material.opacity = brightness;
+    mesh.scale.set(screenSpan / 2, thickness / 0.09, 1);
+    mesh.material.opacity = bright;
 
+    const dx = Math.cos(angle) * screenSpan * 0.5;
+    const dy = Math.sin(angle) * screenSpan * 0.5;
     seg.active = true;
-    seg.intensity = brightness;
-    const halfLen = baseLen * 0.5;
-    const dx = Math.cos(angle) * halfLen;
-    const dy = Math.sin(angle) * halfLen;
-    seg.a.set(x - dx, y - dy);
-    seg.b.set(x + dx, y + dy);
+    seg.intensity = bright;
+    seg.a.set(cx - dx, cy - dy);
+    seg.b.set(cx + dx, cy + dy);
   }
 }
 
-function updateDotLaserInteractions() {
+function distancePointToSegment(px, py, ax, ay, bx, by) {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const lenSq = Math.max(1e-6, abx * abx + aby * aby);
+  const t = THREE.MathUtils.clamp(((px - ax) * abx + (py - ay) * aby) / lenSq, 0, 1);
+  const qx = ax + abx * t;
+  const qy = ay + aby * t;
+  const dx = px - qx;
+  const dy = py - qy;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function updateLaserDotInteractions() {
   for (let i = 0; i < dotCount; i++) {
     if (dotCooldown[i] > 0) continue;
+    const px = dotPositions[i * 3];
+    const py = dotPositions[i * 3 + 1] + dotPoints.position.y;
 
-    const dotP = tempVec2.set(dotPositions[i * 3 + 0], dotPositions[i * 3 + 1] + 6.4);
     for (let l = 0; l < laserMax; l++) {
       const seg = laserSegments[l];
       if (!seg.active || seg.intensity < 0.06) continue;
-      const threshold = 0.2 + seg.intensity * 0.9;
-      const d = distancePointToSegment(dotP, seg.a, seg.b);
-      if (d < threshold) {
+      const d = distancePointToSegment(px, py, seg.a.x, seg.a.y, seg.b.x, seg.b.y);
+      if (d < 0.2 + seg.intensity * 0.7) {
         dotPop[i] = Math.min(1, dotPop[i] + 0.9);
         dotCooldown[i] = 0.15 + Math.random() * 0.15;
 
-        const warmMagenta = new THREE.Color(dotColors[i * 3 + 0], dotColors[i * 3 + 1], dotColors[i * 3 + 2]);
-        emitSparkBurst(
-          dotPositions[i * 3 + 0],
-          dotPositions[i * 3 + 1],
-          dotPositions[i * 3 + 2],
-          warmMagenta,
-          2 + Math.floor(Math.random() * 5)
-        );
+        tempColor.setRGB(dotColors[i * 3], dotColors[i * 3 + 1], dotColors[i * 3 + 2]);
+        emitSparkBurst(dotPositions[i * 3], dotPositions[i * 3 + 1], dotPositions[i * 3 + 2], tempColor, 2 + Math.floor(Math.random() * 4));
         break;
       }
     }
   }
 }
 
+function updateLaserIntersectionGlow() {
+  let write = 0;
+  for (let i = 0; i < laserMax; i++) {
+    const a = laserSegments[i];
+    if (!a.active) continue;
+    for (let j = i + 1; j < laserMax; j++) {
+      const b = laserSegments[j];
+      if (!b.active) continue;
+      const p = lineIntersection(a.a, a.b, b.a, b.b);
+      if (!p || write >= intersectionMax) continue;
+
+      const intensity = THREE.MathUtils.clamp((a.intensity + b.intensity) * 0.16 * config.interactionGlow, 0.02, 0.14); // toned down 60-80%
+      ixPos[write * 3] = p.x;
+      ixPos[write * 3 + 1] = p.y;
+      ixPos[write * 3 + 2] = 0;
+      ixSize[write] = THREE.MathUtils.clamp(12 + intensity * 30, 10, 20); // smaller radius
+      ixTw[write] = 0.35 + intensity * 0.9;
+
+      // tinted only, no white
+      tempColor.setHSL(0.92 - (write % 3) * 0.03, 0.7, 0.52);
+      ixCol[write * 3] = tempColor.r;
+      ixCol[write * 3 + 1] = tempColor.g;
+      ixCol[write * 3 + 2] = tempColor.b;
+      write += 1;
+    }
+  }
+
+  for (let k = write; k < intersectionMax; k++) {
+    ixSize[k] = 0;
+    ixTw[k] = 0;
+  }
+
+  intersectionGeo.attributes.position.needsUpdate = true;
+  intersectionGeo.attributes.aSize.needsUpdate = true;
+  intersectionGeo.attributes.aTwinkle.needsUpdate = true;
+  intersectionGeo.attributes.aColor.needsUpdate = true;
+  intersectionMat.uniforms.uIntensity.value = 0.46;
+}
+
 function updateSparks(dt) {
   for (let i = 0; i < sparkMax; i++) {
     if (sparkLife[i] <= 0) {
-      sparkSizes[i] = 0;
+      sparkSize[i] = 0;
       continue;
     }
     sparkLife[i] -= dt;
     if (sparkLife[i] <= 0) {
-      sparkSizes[i] = 0;
+      sparkSize[i] = 0;
       continue;
     }
 
-    sparkPositions[i * 3 + 0] += sparkVel[i * 3 + 0] * dt;
-    sparkPositions[i * 3 + 1] += sparkVel[i * 3 + 1] * dt;
-    sparkPositions[i * 3 + 2] += sparkVel[i * 3 + 2] * dt;
+    sparkPos[i * 3] += sparkVel[i * 3] * dt;
+    sparkPos[i * 3 + 1] += sparkVel[i * 3 + 1] * dt;
+    sparkPos[i * 3 + 2] += sparkVel[i * 3 + 2] * dt;
     sparkVel[i * 3 + 2] *= 0.98;
 
-    const lifeNorm = THREE.MathUtils.clamp(sparkLife[i] / 0.3, 0, 1);
-    sparkTwinkles[i] = 0.2 + lifeNorm * 1.2;
-    sparkSizes[i] *= 0.96;
+    const lifeNorm = THREE.MathUtils.clamp(sparkLife[i] / 0.28, 0, 1);
+    sparkTwinkle[i] = 0.2 + lifeNorm;
+    sparkSize[i] *= 0.95;
   }
 
   sparkGeo.attributes.position.needsUpdate = true;
   sparkGeo.attributes.aSize.needsUpdate = true;
   sparkGeo.attributes.aTwinkle.needsUpdate = true;
-  sparksMat.uniforms.uIntensity.value = 0.82 + audioState.smoothHigh * 0.9;
+  sparksMat.uniforms.uIntensity.value = 0.72;
 }
 
 function applyVisualDirection(dt, elapsed) {
-  const visualTime = audio.paused ? elapsed - visualSyncStart : audio.currentTime;
-
-  updateSwirlDots(dt, visualTime);
-  updateLasers(dt, visualTime);
-  updateDotLaserInteractions();
+  const t = audio.paused ? elapsed - visualSyncStart : audio.currentTime;
+  updateSwirlDots(dt, t);
+  updateLasers(dt, t);
+  updateLaserDotInteractions();
+  updateLaserIntersectionGlow();
   updateSparks(dt);
 
-  const energy = audioState.smoothRms;
-  const highPeak = audioState.smoothHigh + audioState.onset * 0.5;
+  floor.material.emissiveIntensity = THREE.MathUtils.clamp(0.08 + audioState.smoothRms * 0.1, 0.07, 0.2);
+  bloomPass.strength = THREE.MathUtils.clamp((0.32 + audioState.smoothRms * 0.3 + audioState.smoothHigh * 0.1) * config.bloomStrength, 0.2, 0.72);
+  bloomPass.radius = THREE.MathUtils.lerp(0.16, 0.32, audioState.smoothRms + audioState.smoothMid * 0.2);
+  bloomPass.threshold = THREE.MathUtils.lerp(0.62, 0.47, THREE.MathUtils.clamp(audioState.smoothHigh, 0, 1));
+  chromaPass.uniforms.amount.value = THREE.MathUtils.lerp(chromaPass.uniforms.amount.value, audioState.onset * 0.14, 0.12);
+  renderer.toneMappingExposure = THREE.MathUtils.clamp(0.8 + audioState.smoothRms * 0.08, 0.76, 0.9);
 
-  floor.material.emissiveIntensity = THREE.MathUtils.clamp(0.08 + energy * 0.17, 0.07, 0.28);
-
-  bloomPass.strength = THREE.MathUtils.clamp((0.42 + energy * 0.45 + highPeak * 0.16) * config.bloomStrength, 0.2, 1.25);
-  bloomPass.radius = THREE.MathUtils.lerp(0.2, 0.42, energy + audioState.smoothMid * 0.4);
-  bloomPass.threshold = THREE.MathUtils.lerp(0.56, 0.36, THREE.MathUtils.clamp(highPeak, 0, 1));
-
-  chromaPass.uniforms.amount.value = THREE.MathUtils.lerp(chromaPass.uniforms.amount.value, audioState.onset * 0.22, 0.14);
-
-  renderer.toneMappingExposure = THREE.MathUtils.clamp(0.84 + energy * 0.16, 0.78, 1.08);
-
-  const camTargetX = Math.sin(visualTime * 0.22) * (0.08 + energy * 0.18);
-  const camTargetY = 8.35 + Math.sin(visualTime * 0.18) * (0.04 + audioState.smoothMid * 0.06);
+  const camTargetX = Math.sin(t * 0.2) * (0.06 + audioState.smoothRms * 0.12);
+  const camTargetY = 8.35 + Math.sin(t * 0.16) * (0.03 + audioState.smoothMid * 0.05);
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, camTargetX, 0.03);
   camera.position.y = THREE.MathUtils.lerp(camera.position.y, camTargetY, 0.03);
   camera.lookAt(0, 4.95, 0);
-}
-
-function setUiHiddenForIdle(hidden) {
-  if (uiHiddenForIdle === hidden) return;
-  uiHiddenForIdle = hidden;
-  ui.panel.style.opacity = hidden ? '0' : '1';
-  ui.panel.style.pointerEvents = hidden ? 'none' : 'auto';
-  document.body.style.cursor = hidden ? 'none' : '';
-}
-
-function updateFullscreenIdle(nowMs) {
-  if (!isFullscreen) {
-    setUiHiddenForIdle(false);
-    return;
-  }
-  const inactive = nowMs - lastMouseMoveMs > 1500;
-  setUiHiddenForIdle(inactive);
 }
 
 function updateHud() {
@@ -676,11 +703,8 @@ function animate() {
   const elapsed = clock.elapsedTime;
 
   analyzeAudio(dt);
-  updateStateDirector(dt);
   applyVisualDirection(dt, elapsed);
-  updateFullscreenIdle(performance.now());
   updateHud();
-
   composer.render();
 }
 animate();
@@ -695,7 +719,7 @@ bindRange(ui.masterIntensity, 'masterIntensity');
 bindRange(ui.bloomStrength, 'bloomStrength');
 bindRange(ui.discoEnergy, 'discoEnergy');
 bindRange(ui.laserAmount, 'laserAmount');
-bindRange(ui.spotBrightness, 'spotlightBrightness');
+bindRange(ui.interactionGlow, 'interactionGlow');
 bindRange(ui.extreme, 'extreme');
 
 ui.cinematicMode.addEventListener('change', () => {
@@ -725,29 +749,21 @@ function setDropVisible(visible) {
 function onDragEnter(e) {
   e.preventDefault();
   e.stopPropagation();
-
   if (!e.dataTransfer) return;
   if (!Array.from(e.dataTransfer.types).includes('Files')) return;
-
   ui.dropZone.classList.add('visible');
 }
 
 function onDragOver(e) {
   e.preventDefault();
   e.stopPropagation();
-
   if (!e.dataTransfer) return;
   if (!Array.from(e.dataTransfer.types).includes('Files')) return;
-
   ui.dropZone.classList.add('visible');
 }
 
 function onDragLeave(e) {
-  if (
-    e.clientX === 0 || e.clientY === 0 ||
-    e.clientX >= window.innerWidth ||
-    e.clientY >= window.innerHeight
-  ) {
+  if (e.clientX === 0 || e.clientY === 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
     ui.dropZone.classList.remove('visible');
   }
 }
@@ -755,11 +771,9 @@ function onDragLeave(e) {
 function onDrop(e) {
   e.preventDefault();
   e.stopPropagation();
-
   ui.dropZone.classList.remove('visible');
 
   let file = null;
-
   if (e.dataTransfer.items) {
     for (const item of e.dataTransfer.items) {
       if (item.kind === 'file') {
@@ -776,7 +790,6 @@ function onDrop(e) {
     setStatus('Not an audio file');
     return;
   }
-
   loadAudioFile(file);
 }
 
@@ -786,12 +799,14 @@ window.addEventListener('dragleave', onDragLeave);
 window.addEventListener('drop', onDrop);
 
 window.addEventListener('mousemove', () => {
-  lastMouseMoveMs = performance.now();
-  if (isFullscreen) setUiHiddenForIdle(false);
+  if (!isFullscreen) return;
+  showUiImmediate();
+  scheduleUiHide();
 });
 
 window.addEventListener('keydown', async (e) => {
   if (e.repeat) return;
+
   if (e.key === 'f' || e.key === 'F') {
     try {
       if (!document.fullscreenElement) {
@@ -824,11 +839,15 @@ window.addEventListener('keydown', async (e) => {
 
 document.addEventListener('fullscreenchange', () => {
   isFullscreen = Boolean(document.fullscreenElement);
-  lastMouseMoveMs = performance.now();
-  if (!isFullscreen) setUiHiddenForIdle(false);
+  clearTimeout(hideUiTimer);
+  if (isFullscreen) {
+    showUiImmediate();
+    scheduleUiHide();
+  } else {
+    showUiImmediate();
+  }
 });
 
-// Beginner-friendly default: show loader until audio is loaded.
 ui.dropZone.classList.add('visible');
 ui.dropZone.addEventListener('click', () => ui.fileInput.click());
 ui.fileInput.addEventListener('change', () => {
@@ -871,8 +890,8 @@ ui.recordStartBtn.addEventListener('click', () => {
     const stream = renderer.domElement.captureStream(60);
     recordedChunks = [];
     recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
-    recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) recordedChunks.push(event.data);
     };
     recorder.onstop = () => {
       const blob = new Blob(recordedChunks, { type: 'video/webm' });
@@ -905,4 +924,5 @@ window.addEventListener('resize', () => {
   composer.setSize(window.innerWidth, window.innerHeight);
   dotsMat.uniforms.uPixelRatio.value = renderer.getPixelRatio();
   sparksMat.uniforms.uPixelRatio.value = renderer.getPixelRatio();
+  intersectionMat.uniforms.uPixelRatio.value = renderer.getPixelRatio();
 });
