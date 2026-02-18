@@ -51,3 +51,9 @@ Notes:
 On-screen loading:
 - A full-screen drop overlay says: "Drag & Drop Music Here".
 - When you drag over the page, it highlights.
+
+
+If drag-and-drop does not respond:
+- Drop the file directly onto the browser window (not the terminal).
+- Or click the drop zone and choose the file manually.
+- After loading, Play button becomes enabled.
