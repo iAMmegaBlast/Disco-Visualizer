@@ -7,7 +7,8 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 const app = document.getElementById('app');
 
 const ui = {
-  loadBtn: document.getElementById('loadBtn'),
+  dropZone: document.getElementById('dropZone'),
+  fileInput: document.getElementById('fileInput'),
   playBtn: document.getElementById('playBtn'),
   pauseBtn: document.getElementById('pauseBtn'),
   recordStartBtn: document.getElementById('recordStartBtn'),
@@ -46,7 +47,7 @@ scene.background = new THREE.Color(0x090612);
 scene.fog = new THREE.Fog(0x11061f, 18, 65);
 
 const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 200);
-camera.position.set(0, 8.5, 19);
+camera.position.set(0, 8.4, 19);
 camera.lookAt(0, 5, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -103,14 +104,21 @@ const hazeMat = new THREE.MeshBasicMaterial({
 const haze = new THREE.Mesh(hazeGeo, hazeMat);
 scene.add(haze);
 
+const BG_IMAGE_PATH = '/mnt/data/dancefloor_daimyo_bg_upscaled_1920x1080.png';
 const textureLoader = new THREE.TextureLoader();
-const bgTexture = textureLoader.load('./dancefloor_daimyo_bg_upscaled_1920x1080.png');
+const bgTexture = textureLoader.load(
+  BG_IMAGE_PATH,
+  undefined,
+  undefined,
+  () => setStatus(`Background image not found at ${BG_IMAGE_PATH}. Please place it there.`)
+);
 bgTexture.colorSpace = THREE.SRGBColorSpace;
 const bgPlane = new THREE.Mesh(
   new THREE.PlaneGeometry(42, 23.625),
-  new THREE.MeshBasicMaterial({ map: bgTexture, toneMapped: false })
+  new THREE.MeshBasicMaterial({ map: bgTexture, toneMapped: false, depthWrite: false, depthTest: false })
 );
 bgPlane.position.set(0, 8.8, -22);
+bgPlane.renderOrder = -10;
 scene.add(bgPlane);
 
 const floor = new THREE.Mesh(
@@ -130,7 +138,8 @@ floor.position.y = -1.15;
 scene.add(floor);
 
 const discoGroup = new THREE.Group();
-discoGroup.position.set(-7.5, 10.8, -3.0);
+// Align near visible disco-ball area in the background image (upper-left anchor).
+discoGroup.position.set(-9.6, 11.4, -4.6);
 scene.add(discoGroup);
 
 const discoBall = new THREE.Mesh(
@@ -153,7 +162,6 @@ discoGroup.add(discoCoreLight);
 const sparkleCount = 260;
 const sparkleGeo = new THREE.BufferGeometry();
 const sparklePositions = new Float32Array(sparkleCount * 3);
-const sparkleSizes = new Float32Array(sparkleCount);
 for (let i = 0; i < sparkleCount; i++) {
   const r = 3.2 + Math.random() * 8.8;
   const a = Math.random() * Math.PI * 2;
@@ -161,10 +169,8 @@ for (let i = 0; i < sparkleCount; i++) {
   sparklePositions[i * 3 + 0] = Math.cos(a) * r;
   sparklePositions[i * 3 + 1] = h;
   sparklePositions[i * 3 + 2] = Math.sin(a) * r;
-  sparkleSizes[i] = 2 + Math.random() * 5;
 }
 sparkleGeo.setAttribute('position', new THREE.BufferAttribute(sparklePositions, 3));
-sparkleGeo.setAttribute('size', new THREE.BufferAttribute(sparkleSizes, 1));
 
 const sparkleMat = new THREE.PointsMaterial({
   color: 0xff8ce3,
@@ -219,7 +225,7 @@ function makeMovingHead(x, z, color) {
   g.add(cone);
 
   spotlightRig.add(g);
-  movingHeads.push({ group: g, spot, cone, baseX: x, baseZ: z });
+  movingHeads.push({ group: g, spot, cone });
 }
 
 makeMovingHead(-10, 5, 0xffb176);
@@ -244,21 +250,11 @@ let sourceNode = null;
 let freqData = null;
 let recorder = null;
 let recordedChunks = [];
-let recordStream = null;
 
 const audioState = {
-  bass: 0,
-  mid: 0,
-  high: 0,
-  rms: 0,
-  onset: 0,
-  prevRms: 0,
-  agc: 1,
-  compressed: 0,
-  smoothBass: 0,
-  smoothMid: 0,
-  smoothHigh: 0,
-  smoothRms: 0,
+  bass: 0, mid: 0, high: 0, rms: 0, onset: 0,
+  prevRms: 0, agc: 1, compressed: 0,
+  smoothBass: 0, smoothMid: 0, smoothHigh: 0, smoothRms: 0,
   mode: { intro: 1, groove: 0, build: 0, climax: 0 },
   modeDisplay: 'INTRO'
 };
@@ -278,6 +274,31 @@ function setupAudioContext() {
   sourceNode = audioCtx.createMediaElementSource(audio);
   sourceNode.connect(analyser);
   analyser.connect(audioCtx.destination);
+}
+
+function isSupportedAudioFile(file) {
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  return ['mp3', 'wav', 'ogg', 'm4a'].includes(ext) || (file.type && file.type.startsWith('audio/'));
+}
+
+function loadAudioFile(file) {
+  if (!file) return;
+  if (!isSupportedAudioFile(file)) {
+    setStatus('Unsupported file format. Use mp3, wav, ogg, or m4a.');
+    return;
+  }
+
+  try {
+    setupAudioContext();
+    const url = URL.createObjectURL(file);
+    audio.src = url;
+    audio.load();
+    ui.playBtn.disabled = false;
+    setStatus(`Loaded: ${file.name}. Analysis ready. Click Play.`);
+    ui.dropZone.style.display = 'none';
+  } catch (err) {
+    setStatus(`Load error: ${err.message}`);
+  }
 }
 
 function bandEnergy(data, minHz, maxHz, sampleRate) {
@@ -330,11 +351,6 @@ function analyzeAudio(dt) {
   audioState.smoothMid += (mid - audioState.smoothMid) * smoothA;
   audioState.smoothHigh += (high - audioState.smoothHigh) * smoothA;
   audioState.smoothRms += (audioState.compressed - audioState.smoothRms) * (1 - Math.exp(-dt / 0.18));
-
-  audioState.bass = bass;
-  audioState.mid = mid;
-  audioState.high = high;
-  audioState.rms = rms;
 }
 
 function updateStateDirector(dt) {
@@ -350,9 +366,7 @@ function updateStateDirector(dt) {
   const targets = { intro: introTarget, groove: grooveTarget, build: buildTarget, climax: climaxTarget };
   const blend = 1 - Math.exp(-dt / THREE.MathUtils.lerp(1.2, 0.55, config.extreme));
 
-  for (const k of Object.keys(audioState.mode)) {
-    audioState.mode[k] += (targets[k] - audioState.mode[k]) * blend;
-  }
+  for (const k of Object.keys(audioState.mode)) audioState.mode[k] += (targets[k] - audioState.mode[k]) * blend;
 
   const sum = Object.values(audioState.mode).reduce((a, b) => a + b, 0) || 1;
   for (const k of Object.keys(audioState.mode)) audioState.mode[k] /= sum;
@@ -365,11 +379,7 @@ function updateStateDirector(dt) {
 function applyLightingDirection(dt, elapsed) {
   const mode = audioState.mode;
   const groovePulse = 0.5 + 0.5 * Math.sin(elapsed * THREE.MathUtils.lerp(2.4, 5.2, config.extreme));
-  const directorEnergy = THREE.MathUtils.clamp(
-    (0.28 + 0.7 * audioState.smoothRms + mode.build * 0.2 + mode.climax * 0.25) * config.masterIntensity,
-    0.18,
-    1.25
-  );
+  const directorEnergy = THREE.MathUtils.clamp((0.28 + 0.7 * audioState.smoothRms + mode.build * 0.2 + mode.climax * 0.25) * config.masterIntensity, 0.18, 1.25);
 
   const discoSpeed = THREE.MathUtils.lerp(0.25, 1.35, mode.climax * 0.8 + mode.build * 0.5 + config.extreme * 0.4);
   discoGroup.rotation.y += dt * discoSpeed;
@@ -409,23 +419,23 @@ function applyLightingDirection(dt, elapsed) {
     l.rotation.z = Math.PI / 2 + Math.cos(elapsed * (0.7 + mode.groove * 1.1) + i * 1.2) * 0.4;
   });
 
-  const floorGlow = THREE.MathUtils.clamp(0.07 + directorEnergy * (0.14 + mode.groove * 0.09 + mode.climax * 0.06), 0.05, 0.33);
-  floor.material.emissiveIntensity = floorGlow;
+  floor.material.emissiveIntensity = THREE.MathUtils.clamp(0.07 + directorEnergy * (0.14 + mode.groove * 0.09 + mode.climax * 0.06), 0.05, 0.33);
 
   bloomPass.strength = THREE.MathUtils.clamp((0.45 + directorEnergy * 0.65 + mode.climax * 0.22) * config.bloomStrength * (config.cinematicMode ? 0.9 : 1.05), 0.2, 2.2);
   bloomPass.radius = THREE.MathUtils.lerp(0.18, 0.45, mode.build + mode.climax * 0.9 + config.extreme * 0.6);
-  bloomPass.threshold = THREE.MathUtils.lerp(0.47, 0.24, mode.climax * 0.7 + config.clubMode * 0.4);
+  bloomPass.threshold = THREE.MathUtils.lerp(0.47, 0.24, mode.climax * 0.7 + (config.clubMode ? 0.4 : 0));
 
   const hit = THREE.MathUtils.clamp(audioState.onset * 1.2 + mode.climax * 0.25, 0, 1);
   chromaPass.uniforms.amount.value = THREE.MathUtils.lerp(chromaPass.uniforms.amount.value, hit * 0.6, 0.16);
 
   renderer.toneMappingExposure = THREE.MathUtils.clamp(0.86 + directorEnergy * 0.24 - mode.intro * 0.08, 0.72, 1.22);
 
-  const camTargetX = Math.sin(elapsed * 0.23) * (0.4 + mode.build * 0.5 + mode.climax * 0.7);
-  const camTargetY = 8.5 + Math.sin(elapsed * 0.31) * (0.16 + mode.groove * 0.22 + config.extreme * 0.25);
+  // Subtle camera drift so background remains a stable stage image.
+  const camTargetX = Math.sin(elapsed * 0.20) * (0.12 + mode.build * 0.18 + mode.climax * 0.2);
+  const camTargetY = 8.4 + Math.sin(elapsed * 0.26) * (0.05 + mode.groove * 0.08 + config.extreme * 0.1);
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, camTargetX, 0.03);
   camera.position.y = THREE.MathUtils.lerp(camera.position.y, camTargetY, 0.03);
-  camera.lookAt(0, 4.9 + mode.build * 0.4, 0);
+  camera.lookAt(0, 4.95 + mode.build * 0.15, 0);
 }
 
 function updateHud() {
@@ -482,26 +492,46 @@ ui.showHud.addEventListener('change', () => {
   config.showHud = ui.showHud.checked;
 });
 
-ui.loadBtn.addEventListener('click', async () => {
-  try {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'audio/*';
-    input.onchange = () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      const url = URL.createObjectURL(file);
-      audio.src = url;
-      setStatus(`Loaded: ${file.name}`);
-    };
-    input.click();
-  } catch (err) {
-    setStatus(`Load error: ${err.message}`);
-  }
+function setDropActive(active) {
+  ui.dropZone.classList.toggle('active', active);
+}
+
+['dragenter', 'dragover'].forEach((evt) => {
+  window.addEventListener(evt, (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDropActive(true);
+  });
+});
+
+['dragleave', 'dragend'].forEach((evt) => {
+  window.addEventListener(evt, (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDropActive(false);
+  });
+});
+
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  setDropActive(false);
+  const file = e.dataTransfer?.files?.[0];
+  loadAudioFile(file);
+});
+
+ui.dropZone.addEventListener('click', () => ui.fileInput.click());
+ui.fileInput.addEventListener('change', () => {
+  const file = ui.fileInput.files?.[0];
+  loadAudioFile(file);
 });
 
 ui.playBtn.addEventListener('click', async () => {
   try {
+    if (!audio.src) {
+      setStatus('Drop or select an audio file first.');
+      return;
+    }
     setupAudioContext();
     if (audioCtx.state === 'suspended') await audioCtx.resume();
     await audio.play();
@@ -518,9 +548,9 @@ ui.pauseBtn.addEventListener('click', () => {
 
 ui.recordStartBtn.addEventListener('click', () => {
   try {
-    recordStream = renderer.domElement.captureStream(60);
+    const stream = renderer.domElement.captureStream(60);
     recordedChunks = [];
-    recorder = new MediaRecorder(recordStream, { mimeType: 'video/webm;codecs=vp9' });
+    recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
     recorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) recordedChunks.push(e.data);
     };

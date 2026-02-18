@@ -17,8 +17,9 @@ BEGINNER STEPS (copy exactly):
 5) Open the localhost URL shown in the terminal
    (usually something like http://localhost:5173)
 
-6) Click "Load Audio"
-   - Choose your music file (.mp3/.wav/etc.)
+6) Drag & Drop your music file onto the webpage
+   - Supported: mp3, wav, ogg, m4a
+   - Fallback: click the big drop zone to open file browser
 
 7) Click "Play"
 
@@ -45,3 +46,8 @@ Notes:
   INTRO -> GROOVE -> BUILD -> CLIMAX
 - It uses Web Audio analysis (bass/mid/high/RMS/onset) with smoothing + AGC
   so brightness breathes and avoids constant white-out.
+
+
+On-screen loading:
+- A full-screen drop overlay says: "Drag & Drop Music Here".
+- When you drag over the page, it highlights.

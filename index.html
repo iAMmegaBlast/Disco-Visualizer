@@ -7,8 +7,34 @@
     <style>
       html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #07040d; font-family: Arial, sans-serif; }
       #app { width: 100%; height: 100%; }
+
+      #dropZone {
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: auto;
+        background: rgba(8, 6, 16, 0.06);
+        transition: background 180ms ease;
+      }
+      #dropZone .panel {
+        border: 2px dashed rgba(255,255,255,0.65);
+        border-radius: 18px;
+        color: #ffeefe;
+        padding: 24px 34px;
+        font-size: 24px;
+        letter-spacing: 0.5px;
+        text-shadow: 0 2px 12px rgba(0,0,0,0.7);
+        background: rgba(30, 18, 44, 0.36);
+      }
+      #dropZone.active {
+        background: rgba(178, 98, 255, 0.2);
+      }
+
       #ui {
-        position: fixed; top: 12px; left: 12px; z-index: 20;
+        position: fixed; top: 12px; left: 12px; z-index: 40;
         width: 340px; max-height: calc(100vh - 24px); overflow: auto;
         background: rgba(12, 10, 20, 0.78); color: #f7e9ff;
         border: 1px solid rgba(255,255,255,0.15); border-radius: 12px;
@@ -19,6 +45,7 @@
       .row label { display: block; font-size: 12px; margin-bottom: 2px; }
       input[type="range"] { width: 100%; }
       button { margin: 2px 2px 2px 0; border: 0; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
       .primary { background: #b94eff; color: white; }
       .secondary { background: #2f2144; color: #efe4ff; }
       .meter-wrap { display: grid; grid-template-columns: 38px 1fr; gap: 6px; align-items: center; margin-bottom: 4px; }
@@ -31,12 +58,16 @@
   <body>
     <div id="app"></div>
 
+    <div id="dropZone">
+      <div class="panel">Drag &amp; Drop Music Here</div>
+      <input id="fileInput" type="file" accept=".mp3,.wav,.ogg,.m4a,audio/*" hidden />
+    </div>
+
     <div id="ui">
       <h2>Japanese Disco Lightshow Director</h2>
 
       <div class="row">
-        <button id="loadBtn" class="primary">Load Audio</button>
-        <button id="playBtn" class="secondary">Play</button>
+        <button id="playBtn" class="secondary" disabled>Play</button>
         <button id="pauseBtn" class="secondary">Pause</button>
       </div>
 
@@ -65,7 +96,7 @@
       </div>
 
       <div id="stateText">State: INTRO</div>
-      <div id="status">Tip: Click “Load Audio”, then “Play”.</div>
+      <div id="status">Tip: Drag an audio file into the page, then click Play.</div>
     </div>
 
     <script type="module" src="/main.js"></script>
