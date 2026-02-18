@@ -12,12 +12,15 @@
         position: fixed;
         inset: 0;
         z-index: 30;
-        display: flex;
+        display: none;
         align-items: center;
         justify-content: center;
         pointer-events: auto;
-        background: rgba(8, 6, 16, 0.06);
-        transition: background 180ms ease;
+        background: rgba(8, 6, 16, 0.12);
+        transition: background 160ms ease;
+      }
+      #dropZone.visible {
+        display: flex;
       }
       #dropZone .panel {
         border: 2px dashed rgba(255,255,255,0.65);
@@ -30,7 +33,11 @@
         background: rgba(30, 18, 44, 0.36);
       }
       #dropZone.active {
-        background: rgba(178, 98, 255, 0.2);
+        background: rgba(178, 98, 255, 0.28);
+      }
+      #dropZone.active .panel {
+        border-color: rgba(255,255,255,0.95);
+        box-shadow: 0 0 24px rgba(194, 114, 255, 0.5);
       }
 
       #ui {
@@ -58,9 +65,9 @@
   <body>
     <div id="app"></div>
 
-    <div id="dropZone">
+    <div id="dropZone" aria-label="Audio drop zone">
       <div class="panel">Drag &amp; Drop Music Here</div>
-      <input id="fileInput" type="file" accept=".mp3,.wav,.ogg,.m4a,audio/*" hidden />
+      <input id="fileInput" type="file" accept="audio/*,.mp3,.wav,.ogg,.m4a" hidden />
     </div>
 
     <div id="ui">
@@ -96,7 +103,7 @@
       </div>
 
       <div id="stateText">State: INTRO</div>
-      <div id="status">Tip: Drag an audio file into the page, then click Play.</div>
+      <div id="status">Tip: Drag an audio file into the page, or click the drop zone after dragging once.</div>
     </div>
 
     <script type="module" src="/main.js"></script>

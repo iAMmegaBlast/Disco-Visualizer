@@ -291,6 +291,7 @@ function loadAudioFile(file) {
   }
 
   try {
+    setupAudioContext();
     if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
     currentAudioUrl = URL.createObjectURL(file);
     audio.pause();
@@ -499,44 +500,43 @@ function setDropActive(active) {
   ui.dropZone.classList.toggle('active', active);
 }
 
+function setDropVisible(visible) {
+  ui.dropZone.classList.toggle('visible', visible);
+}
+
 function getFileFromDrop(dataTransfer) {
   if (!dataTransfer) return null;
-  if (dataTransfer.items && dataTransfer.items.length > 0) {
-    for (const item of dataTransfer.items) {
-      if (item.kind === 'file') {
-        const file = item.getAsFile();
-        if (file) return file;
-      }
-    }
-  }
   return dataTransfer.files?.[0] || null;
 }
 
-['dragenter', 'dragover', 'dragleave', 'drop'].forEach((evt) => {
-  window.addEventListener(evt, (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-  });
-});
-
-window.addEventListener('dragenter', () => {
+window.addEventListener('dragenter', (e) => {
+  e.preventDefault();
   dragDepth += 1;
+  setDropVisible(true);
   setDropActive(true);
-  ui.dropZone.style.display = 'flex';
 });
 
-window.addEventListener('dragleave', () => {
+window.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  setDropVisible(true);
+  setDropActive(true);
+});
+
+window.addEventListener('dragleave', (e) => {
+  e.preventDefault();
   dragDepth = Math.max(0, dragDepth - 1);
-  if (dragDepth === 0) setDropActive(false);
-});
-
-window.addEventListener('dragover', () => {
-  setDropActive(true);
+  if (dragDepth === 0) {
+    setDropActive(false);
+    setDropVisible(false);
+  }
 });
 
 window.addEventListener('drop', (e) => {
+  e.preventDefault();
   dragDepth = 0;
   setDropActive(false);
+  setDropVisible(false);
   const file = getFileFromDrop(e.dataTransfer);
   loadAudioFile(file);
 });
