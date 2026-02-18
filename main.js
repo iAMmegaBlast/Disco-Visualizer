@@ -776,9 +776,19 @@ function setDropVisible(visible) {
   ui.dropZone.classList.toggle('visible', visible);
 }
 
+
+window.addEventListener('dragenter', (e) => console.log('WIN dragenter'), true);
+window.addEventListener('dragover', (e) => console.log('WIN dragover'), true);
+window.addEventListener('drop', (e) => console.log('WIN drop'), true);
+document.addEventListener('dragenter', (e) => console.log('DOC dragenter'), true);
+document.addEventListener('dragover', (e) => console.log('DOC dragover'), true);
+document.addEventListener('drop', (e) => console.log('DOC drop'), true);
+
 function onDragEnter(e) {
   e.preventDefault();
   e.stopPropagation();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  setStatus('dragenter');
   if (!e.dataTransfer) return;
   if (!Array.from(e.dataTransfer.types).includes('Files')) return;
   ui.dropZone.classList.add('visible');
@@ -787,6 +797,8 @@ function onDragEnter(e) {
 function onDragOver(e) {
   e.preventDefault();
   e.stopPropagation();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  setStatus('dragover');
   if (!e.dataTransfer) return;
   if (!Array.from(e.dataTransfer.types).includes('Files')) return;
   ui.dropZone.classList.add('visible');
@@ -827,6 +839,10 @@ window.addEventListener('dragenter', onDragEnter);
 window.addEventListener('dragover', onDragOver);
 window.addEventListener('dragleave', onDragLeave);
 window.addEventListener('drop', onDrop);
+document.addEventListener('dragenter', onDragEnter, { capture: true });
+document.addEventListener('dragover', onDragOver, { capture: true });
+document.addEventListener('dragleave', onDragLeave, { capture: true });
+document.addEventListener('drop', onDrop, { capture: true });
 
 window.addEventListener('mousemove', () => {
   if (!isFullscreen) return;
