@@ -251,7 +251,6 @@ let freqData = null;
 let recorder = null;
 let recordedChunks = [];
 let currentAudioUrl = null;
-let dragDepth = 0;
 
 const audioState = {
   bass: 0, mid: 0, high: 0, rms: 0, onset: 0,
@@ -300,7 +299,6 @@ function loadAudioFile(file) {
     ui.playBtn.disabled = false;
     setStatus(`Loaded ${file.name}`);
     setDropVisible(false);
-    setDropActive(false);
   } catch (err) {
     setStatus(`Load error: ${err.message}`);
   }
@@ -497,95 +495,75 @@ ui.showHud.addEventListener('change', () => {
   config.showHud = ui.showHud.checked;
 });
 
-function setDropActive(active) {
-  ui.dropZone.classList.toggle('active', active);
-}
-
 function setDropVisible(visible) {
   ui.dropZone.classList.toggle('visible', visible);
 }
 
-function hasFilePayload(e) {
-  const types = e?.dataTransfer?.types;
-  if (!types) return false;
-  return Array.from(types).includes('Files');
+function onDragEnter(e) {
+  e.preventDefault();
+  e.stopPropagation();
+
+  if (!e.dataTransfer) return;
+  if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+
+  ui.dropZone.classList.add('visible');
 }
 
-function getFileFromDrop(dataTransfer) {
-  if (!dataTransfer) return null;
+function onDragOver(e) {
+  e.preventDefault();
+  e.stopPropagation();
 
-  if (dataTransfer.items && dataTransfer.items.length > 0) {
-    for (const item of dataTransfer.items) {
+  if (!e.dataTransfer) return;
+  if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+
+  ui.dropZone.classList.add('visible');
+}
+
+function onDragLeave(e) {
+  if (
+    e.clientX === 0 || e.clientY === 0 ||
+    e.clientX >= window.innerWidth ||
+    e.clientY >= window.innerHeight
+  ) {
+    ui.dropZone.classList.remove('visible');
+  }
+}
+
+function onDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+
+  ui.dropZone.classList.remove('visible');
+
+  let file = null;
+
+  if (e.dataTransfer.items) {
+    for (const item of e.dataTransfer.items) {
       if (item.kind === 'file') {
-        const file = item.getAsFile();
-        if (file) return file;
+        file = item.getAsFile();
+        break;
       }
     }
+  } else {
+    file = e.dataTransfer.files[0];
   }
 
-  return dataTransfer.files?.[0] || null;
-}
-
-function addGlobalDndListener(eventName, handler) {
-  window.addEventListener(eventName, handler, false);
-  document.addEventListener(eventName, handler, false);
-}
-
-addGlobalDndListener('dragenter', (e) => {
-  if (!hasFilePayload(e)) return;
-  e.preventDefault();
-  e.stopPropagation();
-  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
-
-  dragDepth += 1;
-  setDropVisible(true);
-  setDropActive(true);
-  setStatus('Drag detected');
-});
-
-addGlobalDndListener('dragover', (e) => {
-  if (!hasFilePayload(e)) return;
-  e.preventDefault();
-  e.stopPropagation();
-  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
-
-  setDropVisible(true);
-  setDropActive(true);
-});
-
-addGlobalDndListener('dragleave', (e) => {
-  if (!hasFilePayload(e)) return;
-  dragDepth = Math.max(0, dragDepth - 1);
-  if (dragDepth === 0) {
-    setDropActive(false);
-    setDropVisible(false);
-  }
-});
-
-addGlobalDndListener('drop', (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
-
-  dragDepth = 0;
-  setDropActive(false);
-  setDropVisible(false);
-  setStatus('Drop detected');
-
-  const file = getFileFromDrop(e.dataTransfer);
-  if (!file) {
-    setStatus('Drop detected but no file found');
-    return;
-  }
+  if (!file) return;
   if (!file.type || !file.type.startsWith('audio/')) {
     setStatus('Not an audio file');
     return;
   }
+
   loadAudioFile(file);
-});
+}
+
+window.addEventListener('dragenter', onDragEnter);
+window.addEventListener('dragover', onDragOver);
+window.addEventListener('dragleave', onDragLeave);
+window.addEventListener('drop', onDrop);
 
 // Beginner-friendly default: show loader until audio is loaded.
-setDropVisible(true);
+ui.dropZone.classList.add('visible');
 ui.dropZone.addEventListener('click', () => ui.fileInput.click());
 ui.fileInput.addEventListener('change', () => {
   const file = ui.fileInput.files?.[0];
