@@ -20,6 +20,8 @@ const ui = {
   discoEnergy: document.getElementById('discoEnergy'),
   laserAmount: document.getElementById('laserAmount'),
   interactionGlow: document.getElementById('spotBrightness'),
+  dotColorShift: document.getElementById('dotColorShift'),
+  laserColorShift: document.getElementById('laserColorShift'),
   extreme: document.getElementById('extreme'),
   cinematicMode: document.getElementById('cinematicMode'),
   clubMode: document.getElementById('clubMode'),
@@ -38,6 +40,8 @@ const config = {
   discoEnergy: 1.0,
   laserAmount: 0.9,
   interactionGlow: 0.65,
+  dotColorShift: 0,
+  laserColorShift: 0,
   extreme: 0.35,
   cinematicMode: true,
   clubMode: false,
@@ -115,6 +119,7 @@ const dotHeight = new Float32Array(dotCount);
 const dotSeed = new Float32Array(dotCount);
 const dotPop = new Float32Array(dotCount);
 const dotCooldown = new Float32Array(dotCount);
+const dotColorMix = new Float32Array(dotCount);
 
 for (let i = 0; i < dotCount; i++) {
   dotRadius[i] = 2.4 + Math.pow(Math.random(), 0.76) * 14.8;
@@ -124,12 +129,10 @@ for (let i = 0; i < dotCount; i++) {
   dotSizes[i] = 10 + Math.random() * 18;
   dotTwinkles[i] = 0.35;
 
-  const warm = new THREE.Color().setHSL(0.115 + Math.random() * 0.05, 0.88, 0.52);
-  const magenta = new THREE.Color().setHSL(0.89 + Math.random() * 0.05, 0.74, 0.5);
-  const color = warm.lerp(magenta, 0.38 + Math.random() * 0.5);
-  dotColors[i * 3] = color.r;
-  dotColors[i * 3 + 1] = color.g;
-  dotColors[i * 3 + 2] = color.b;
+  dotColorMix[i] = 0.38 + Math.random() * 0.5;
+  dotColors[i * 3] = 0.6;
+  dotColors[i * 3 + 1] = 0.3;
+  dotColors[i * 3 + 2] = 0.55;
 }
 
 dotsGeo.setAttribute('position', new THREE.BufferAttribute(dotPositions, 3));
@@ -218,10 +221,10 @@ const laserSegments = Array.from({ length: laserMax }, () => ({
   intensity: 0
 }));
 
-const laserPalette = [0xff69be, 0xf7aa68, 0xeb6ef2, 0xf69c9f, 0xe981f2, 0xf0bb74, 0xf36ca4, 0xe19cf0];
+const laserBaseHueOffsets = [0.0, -0.07, 0.05, -0.03, 0.03, -0.1, 0.01, 0.08];
 for (let i = 0; i < laserMax; i++) {
   const mat = new THREE.MeshBasicMaterial({
-    color: laserPalette[i],
+    color: 0xff69be,
     transparent: true,
     opacity: 0,
     blending: THREE.AdditiveBlending,
@@ -251,6 +254,9 @@ intersectionMat.uniforms = {
 const intersectionPoints = new THREE.Points(intersectionGeo, intersectionMat);
 intersectionPoints.position.set(0, 0, -5.2);
 scene.add(intersectionPoints);
+
+updateDotPalette();
+updateLaserPalette();
 
 
 const tempColor = new THREE.Color();
@@ -312,6 +318,28 @@ function scheduleUiHide() {
 function showUiImmediate() {
   ui.panel.classList.remove('uiHidden');
   renderer.domElement.style.cursor = '';
+}
+
+function updateDotPalette() {
+  const warmBase = 0.115 + config.dotColorShift;
+  const magentaBase = 0.89 + config.dotColorShift;
+  for (let i = 0; i < dotCount; i++) {
+    const warm = tempColor.setHSL((warmBase + dotSeed[i] * 0.05 + 1) % 1, 0.88, 0.52).clone();
+    const magenta = new THREE.Color().setHSL((magentaBase + dotSeed[i] * 0.05 + 1) % 1, 0.74, 0.5);
+    const color = warm.lerp(magenta, dotColorMix[i]);
+    dotColors[i * 3] = color.r;
+    dotColors[i * 3 + 1] = color.g;
+    dotColors[i * 3 + 2] = color.b;
+  }
+  dotsGeo.attributes.aColor.needsUpdate = true;
+}
+
+function updateLaserPalette() {
+  for (let i = 0; i < laserMax; i++) {
+    const hue = (0.9 + config.laserColorShift + laserBaseHueOffsets[i] + 1) % 1;
+    tempColor.setHSL(hue, 0.72, 0.56);
+    laserMeshes[i].material.color.copy(tempColor);
+  }
 }
 
 
@@ -621,7 +649,7 @@ function updateLaserIntersectionGlow() {
       ixTw[write] = 0.35 + intensity * 0.9;
 
       // tinted only, no white
-      tempColor.setHSL(0.92 - (write % 3) * 0.03, 0.7, 0.52);
+      tempColor.setHSL((0.92 + config.laserColorShift - (write % 3) * 0.03 + 1) % 1, 0.7, 0.52);
       ixCol[write * 3] = tempColor.r;
       ixCol[write * 3 + 1] = tempColor.g;
       ixCol[write * 3 + 2] = tempColor.b;
@@ -712,6 +740,8 @@ animate();
 function bindRange(el, key, parse = parseFloat) {
   el.addEventListener('input', () => {
     config[key] = parse(el.value);
+    if (key === 'dotColorShift') updateDotPalette();
+    if (key === 'laserColorShift') updateLaserPalette();
   });
 }
 
@@ -720,6 +750,8 @@ bindRange(ui.bloomStrength, 'bloomStrength');
 bindRange(ui.discoEnergy, 'discoEnergy');
 bindRange(ui.laserAmount, 'laserAmount');
 bindRange(ui.interactionGlow, 'interactionGlow');
+bindRange(ui.dotColorShift, 'dotColorShift');
+bindRange(ui.laserColorShift, 'laserColorShift');
 bindRange(ui.extreme, 'extreme');
 
 ui.cinematicMode.addEventListener('change', () => {
@@ -820,6 +852,9 @@ window.addEventListener('mousemove', () => {
   scheduleUiHide();
 });
 
+window.addEventListener('dblclick', () => {
+  toggleFullscreen();
+});
 
 window.addEventListener('keydown', async (e) => {
   if (e.repeat) return;
