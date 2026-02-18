@@ -11,12 +11,15 @@ import importlib.util
 import json
 import math
 import os
+import platform
 import random
 import shutil
 import subprocess
 import sys
 import time
+import traceback
 import tkinter as tk
+from datetime import datetime
 from dataclasses import asdict, dataclass
 from tkinter import filedialog, messagebox
 from typing import Dict, List, Tuple
@@ -37,6 +40,46 @@ import pygame
 WIDTH, HEIGHT = 1920, 1080
 FPS = 60
 DEFAULT_BG_PATH = "/mnt/data/dancefloor_daimyo_bg_upscaled_1920x1080.png"
+REPORTS_DIR = "debug_reports"
+
+
+def ensure_reports_dir() -> str:
+    os.makedirs(REPORTS_DIR, exist_ok=True)
+    return REPORTS_DIR
+
+
+def write_json_report(report: dict, prefix: str) -> str:
+    out_dir = ensure_reports_dir()
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = os.path.join(out_dir, f"{prefix}_{stamp}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+    return path
+
+
+def build_debug_context(args=None, cfg=None, extra=None) -> dict:
+    payload = {
+        "timestamp": datetime.now().isoformat(),
+        "cwd": os.getcwd(),
+        "argv": sys.argv,
+        "python": sys.version,
+        "platform": platform.platform(),
+    }
+    if args is not None:
+        payload["args"] = vars(args) if hasattr(args, "__dict__") else str(args)
+    if cfg is not None:
+        payload["config"] = asdict(cfg)
+    if extra is not None:
+        payload["extra"] = extra
+    return payload
+
+
+def write_crash_report(exc: Exception, args=None, cfg=None, extra=None) -> str:
+    payload = build_debug_context(args=args, cfg=cfg, extra=extra)
+    payload["error_type"] = type(exc).__name__
+    payload["error_message"] = str(exc)
+    payload["traceback"] = traceback.format_exc()
+    return write_json_report(payload, "crash_report")
 
 
 @dataclass
@@ -99,6 +142,7 @@ def print_startup_guide() -> None:
     print("\nKeyboard controls in preview:")
     print("  [ / ] intensity | - / + bloom | 1/2 rays | 3/4 lasers | 5/6 sparkles")
     print("  O/P origin X | K/L origin Y | S save last_preset.json | H toggle HUD")
+    print("  F9 write debug snapshot JSON (for sharing issues)")
     print("  ESC or close window to quit preview\n")
 
 
@@ -649,6 +693,30 @@ def save_preset(path: str, cfg: Config):
     print(f"Preset saved to {path}")
 
 
+def save_debug_snapshot(path: str, args, cfg: Config, vis: "DiscoVisualizer", frame_i: int):
+    payload = build_debug_context(
+        args=args,
+        cfg=cfg,
+        extra={
+            "frame": frame_i,
+            "drop_until": vis.drop_until,
+            "last_strobe_t": vis.last_strobe_t,
+            "sparkle_count": len(vis.sparkles),
+            "feature_preview": {
+                "bass": vis.feature_at(frame_i, "bass"),
+                "mids": vis.feature_at(frame_i, "mids"),
+                "highs": vis.feature_at(frame_i, "highs"),
+                "rms": vis.feature_at(frame_i, "rms"),
+                "peak": vis.feature_at(frame_i, "peak"),
+                "onset": vis.feature_at(frame_i, "onset"),
+            },
+        },
+    )
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    print(f"Debug snapshot saved to {path}")
+
+
 def load_preset(path: str, cfg: Config):
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -659,7 +727,7 @@ def load_preset(path: str, cfg: Config):
     print(f"Loaded preset from {path}")
 
 
-def handle_key(event_key, cfg: Config, vis: DiscoVisualizer):
+def handle_key(event_key, cfg: Config, vis: DiscoVisualizer, args, frame_i: int):
     delta = 0.05
     moved = False
     if event_key == pygame.K_LEFTBRACKET:
@@ -709,12 +777,16 @@ def handle_key(event_key, cfg: Config, vis: DiscoVisualizer):
     elif event_key == pygame.K_h:
         vis.hud = not vis.hud
         print(f"HUD: {'ON' if vis.hud else 'OFF'}")
+    elif event_key == pygame.K_F9:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(ensure_reports_dir(), f"debug_snapshot_{stamp}.json")
+        save_debug_snapshot(path, args, cfg, vis, frame_i)
 
     if moved:
         print(f"origin: ({cfg.origin_x:.3f}, {cfg.origin_y:.3f})")
 
 
-def run_preview(bg: pygame.Surface, audio_path: str, vis: DiscoVisualizer, total_frames: int):
+def run_preview(bg: pygame.Surface, audio_path: str, vis: DiscoVisualizer, total_frames: int, args):
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Disco Ball Club Light Show")
     clock = pygame.time.Clock()
@@ -737,7 +809,7 @@ def run_preview(bg: pygame.Surface, audio_path: str, vis: DiscoVisualizer, total
                 if event.key == pygame.K_ESCAPE:
                     running = False
                 else:
-                    handle_key(event.key, vis.cfg, vis)
+                    handle_key(event.key, vis.cfg, vis, args, frame_i)
 
         frame = vis.render_frame(bg, frame_i, dt)
         vis.draw_hud(frame, frame_i)
@@ -844,6 +916,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hud", action="store_true", help="Show on-screen HUD meters/settings.")
     parser.add_argument("--bg", default=DEFAULT_BG_PATH, help=f"Background image path (default: {DEFAULT_BG_PATH})")
     parser.add_argument("--ui", action="store_true", help="Open a simple window UI to run without command-line options.")
+    parser.add_argument("--debug-report", action="store_true", help="Write run debug report JSON after analysis/export for troubleshooting.")
+    parser.add_argument("--debug-dump", help="Write one-time debug context JSON and exit (no render).")
     return parser
 
 
@@ -932,6 +1006,8 @@ def launch_ui() -> argparse.Namespace | None:
         hud=bool(values["hud"].get()),
         bg=values["bg"].get().strip() or DEFAULT_BG_PATH,
         ui=True,
+        debug_report=False,
+        debug_dump=None,
     )
 
 
@@ -947,6 +1023,14 @@ def main():
     print_startup_guide()
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.debug_dump:
+        path = args.debug_dump
+        payload = build_debug_context(args=args, cfg=None, extra={"note": "debug dump requested before run"})
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        print(f"Debug dump written to {path}")
+        return
 
     if args.ui or len(sys.argv) == 1:
         print("Opening launcher UI...")
@@ -981,14 +1065,41 @@ def main():
     try:
         bg = load_and_fit_background(args.bg)
     except Exception as exc:
+        report = write_crash_report(exc, args=args, cfg=cfg, extra={"stage": "load_background"})
         print(f"[ERROR] Could not load background: {exc}")
+        print(f"Crash report saved to: {report}")
         pygame.quit()
         sys.exit(1)
 
     print("Analyzing audio (offline deterministic pass)...")
-    features = analyze_audio(args.audio, FPS, args.duration)
+    try:
+        features = analyze_audio(args.audio, FPS, args.duration)
+    except Exception as exc:
+        report = write_crash_report(exc, args=args, cfg=cfg, extra={"stage": "analyze_audio"})
+        print(f"[ERROR] Audio analysis failed: {exc}")
+        print(f"Crash report saved to: {report}")
+        pygame.quit()
+        sys.exit(1)
     total_frames = int(features["frames"])
     vis = DiscoVisualizer(cfg, features, args.seed, args.hud)
+
+    if args.debug_report:
+        report = build_debug_context(
+            args=args,
+            cfg=cfg,
+            extra={
+                "stage": "post_analysis",
+                "frames": total_frames,
+                "duration": features.get("duration"),
+                "feature_ranges": {
+                    k: [float(np.min(v)), float(np.max(v))]
+                    for k, v in features.items()
+                    if isinstance(v, np.ndarray)
+                },
+            },
+        )
+        report_path = write_json_report(report, "debug_report")
+        print(f"Debug report saved to {report_path}")
 
     if args.save_preset:
         save_preset(args.save_preset, cfg)
@@ -998,8 +1109,14 @@ def main():
         if args.out:
             export_mp4(bg, args.audio, args.out, vis, total_frames)
         else:
-            run_preview(bg, args.audio, vis, total_frames)
+            run_preview(bg, args.audio, vis, total_frames, args)
         ran_successfully = True
+    except Exception as exc:
+        report = write_crash_report(exc, args=args, cfg=cfg, extra={"stage": "render_loop"})
+        print(f"[ERROR] Runtime failure: {exc}")
+        print("Please send me this crash report file so I can diagnose quickly:")
+        print(f"  {report}")
+        sys.exit(1)
     finally:
         # Auto-save on normal run exit so user tweaks are preserved.
         if ran_successfully:
