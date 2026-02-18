@@ -834,9 +834,6 @@ window.addEventListener('mousemove', () => {
   scheduleUiHide();
 });
 
-window.addEventListener('dblclick', () => {
-  toggleFullscreen();
-});
 
 window.addEventListener('keydown', async (e) => {
   if (e.repeat) return;
