@@ -18,6 +18,8 @@ import time
 import importlib.util
 from dataclasses import asdict, dataclass
 from typing import Dict, List, Tuple
+import tkinter as tk
+from tkinter import filedialog, messagebox
 
 
 REQUIRED_PYTHON_PACKAGES = ["pygame", "numpy", "librosa"]
@@ -72,6 +74,9 @@ class Config:
 
 def print_startup_guide() -> None:
     print("\n=== Disco Ball Club Light Show Visualizer ===")
+    print("EASIEST WAY:")
+    print("  Just run: python visualizer.py")
+    print("  (This opens a simple window so you can pick files and start preview/export.)")
     print("HOW TO RUN (copy/paste):")
     print('  Preview: python visualizer.py --audio "song.wav" --hud')
     print('  Export : python visualizer.py --audio "song.wav" --out "visualizer.mp4"')
@@ -641,7 +646,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawTextHelpFormatter,
         epilog=epilog,
     )
-    parser.add_argument("--audio", required=True, help="Path to input audio (.wav/.mp3/etc.)")
+    parser.add_argument("--audio", help="Path to input audio (.wav/.mp3/etc.)")
     parser.add_argument("--out", help="Output MP4 path. If omitted, opens preview window.")
     parser.add_argument("--duration", type=float, help="Render duration in seconds (default: full audio).")
     parser.add_argument("--seed", type=int, default=7, help="Random seed for deterministic visuals.")
@@ -650,13 +655,121 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save-preset", dest="save_preset", help="Save current settings to JSON and exit.")
     parser.add_argument("--hud", action="store_true", help="Show on-screen HUD meters/settings.")
     parser.add_argument("--bg", default=DEFAULT_BG_PATH, help=f"Background image path (default: {DEFAULT_BG_PATH})")
+    parser.add_argument("--ui", action="store_true", help="Open a simple window UI to run without command-line options.")
     return parser
+
+
+def launch_ui() -> argparse.Namespace | None:
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        print("[ERROR] Could not open UI window (no display available).")
+        print('Run with CLI instead, for example: python visualizer.py --audio "song.wav" --hud')
+        return None
+
+    root.title("Disco Ball Visualizer Launcher")
+    root.geometry("700x430")
+    root.resizable(False, False)
+
+    values = {
+        "audio": tk.StringVar(),
+        "out": tk.StringVar(),
+        "duration": tk.StringVar(),
+        "seed": tk.StringVar(value="7"),
+        "origin": tk.StringVar(value="0.18,0.18"),
+        "preset": tk.StringVar(),
+        "save_preset": tk.StringVar(),
+        "bg": tk.StringVar(value=DEFAULT_BG_PATH),
+        "hud": tk.BooleanVar(value=True),
+    }
+    mode = {"run": None}
+
+    def browse_file(var_name: str, title: str, filetypes):
+        path = filedialog.askopenfilename(title=title, filetypes=filetypes)
+        if path:
+            values[var_name].set(path)
+
+    def browse_save(var_name: str, title: str, default_ext: str):
+        path = filedialog.asksaveasfilename(title=title, defaultextension=default_ext)
+        if path:
+            values[var_name].set(path)
+
+    def row(label, key, y, browse_cb=None, browse_text="Browse"):
+        tk.Label(root, text=label, anchor="w").place(x=20, y=y, width=145)
+        tk.Entry(root, textvariable=values[key]).place(x=170, y=y, width=430)
+        if browse_cb:
+            tk.Button(root, text=browse_text, command=browse_cb).place(x=610, y=y - 1, width=75)
+
+    row("Audio file*", "audio", 30, lambda: browse_file("audio", "Select audio", [("Audio", "*.wav *.mp3 *.flac *.ogg *.m4a"), ("All", "*.*")]))
+    row("Background", "bg", 70, lambda: browse_file("bg", "Select background image", [("Image", "*.png *.jpg *.jpeg *.bmp"), ("All", "*.*")]))
+    row("Output MP4", "out", 110, lambda: browse_save("out", "Save output video", ".mp4"), "Save As")
+    row("Duration (sec)", "duration", 150)
+    row("Seed", "seed", 190)
+    row("Origin x,y", "origin", 230)
+    row("Load preset", "preset", 270, lambda: browse_file("preset", "Load preset JSON", [("JSON", "*.json"), ("All", "*.*")]))
+    row("Save preset", "save_preset", 310, lambda: browse_save("save_preset", "Save preset JSON", ".json"), "Save As")
+
+    tk.Checkbutton(root, text="Show HUD", variable=values["hud"]).place(x=170, y=345)
+
+    def validate_and_close(chosen_mode: str):
+        audio = values["audio"].get().strip()
+        if not audio:
+            messagebox.showerror("Missing audio", "Please select an audio file.")
+            return
+        mode["run"] = chosen_mode
+        root.destroy()
+
+    tk.Button(root, text="Start Preview", command=lambda: validate_and_close("preview"), bg="#1d7f31", fg="white").place(x=170, y=380, width=180)
+    tk.Button(root, text="Export MP4", command=lambda: validate_and_close("export"), bg="#8a2be2", fg="white").place(x=360, y=380, width=180)
+    tk.Button(root, text="Cancel", command=root.destroy).place(x=550, y=380, width=135)
+
+    tk.Label(
+        root,
+        text="Tip: Leave Output MP4 empty for preview-only. For Export MP4, output path is recommended.",
+        anchor="w",
+    ).place(x=20, y=5, width=660)
+
+    root.mainloop()
+
+    if mode["run"] is None:
+        return None
+
+    out_path = values["out"].get().strip()
+    if mode["run"] == "preview":
+        out_path = ""
+
+    ns = argparse.Namespace(
+        audio=values["audio"].get().strip(),
+        out=out_path or None,
+        duration=float(values["duration"].get().strip()) if values["duration"].get().strip() else None,
+        seed=int(values["seed"].get().strip() or 7),
+        origin=values["origin"].get().strip() or "0.18,0.18",
+        preset=values["preset"].get().strip() or None,
+        save_preset=values["save_preset"].get().strip() or None,
+        hud=bool(values["hud"].get()),
+        bg=values["bg"].get().strip() or DEFAULT_BG_PATH,
+        ui=True,
+    )
+    return ns
 
 
 def main():
     print_startup_guide()
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.ui or len(sys.argv) == 1:
+        print("Opening launcher UI...")
+        ui_args = launch_ui()
+        if ui_args is None:
+            if not args.audio:
+                print("No run selected. Exiting.")
+                return
+        else:
+            args = ui_args
+
+    if not args.audio:
+        parser.error("the following arguments are required: --audio (or run with --ui / no args to use launcher window)")
 
     if not os.path.exists(args.audio):
         print(f"[ERROR] Audio file not found: {args.audio}")
