@@ -12,6 +12,7 @@ const ui = {
   fileInput: document.getElementById('fileInput'),
   playBtn: document.getElementById('playBtn'),
   pauseBtn: document.getElementById('pauseBtn'),
+  fullscreenBtn: document.getElementById('fullscreenBtn'),
   recordStartBtn: document.getElementById('recordStartBtn'),
   recordStopBtn: document.getElementById('recordStopBtn'),
   masterIntensity: document.getElementById('masterIntensity'),
@@ -100,21 +101,6 @@ const finalClampPass = new ShaderPass({
 });
 composer.addPass(finalClampPass);
 
-const floor = new THREE.Mesh(
-  new THREE.PlaneGeometry(70, 52, 1, 1),
-  new THREE.MeshPhysicalMaterial({
-    color: 0x120812,
-    metalness: 0.38,
-    roughness: 0.38,
-    clearcoat: 0.8,
-    clearcoatRoughness: 0.25,
-    emissive: 0x160716,
-    emissiveIntensity: 0.14
-  })
-);
-floor.rotation.x = -Math.PI / 2;
-floor.position.y = -1.2;
-scene.add(floor);
 
 const dotCount = config.dotCount;
 const dotsGeo = new THREE.BufferGeometry();
@@ -325,6 +311,18 @@ function scheduleUiHide() {
 function showUiImmediate() {
   ui.panel.classList.remove('uiHidden');
   renderer.domElement.style.cursor = '';
+}
+
+async function toggleFullscreen() {
+  try {
+    if (!document.fullscreenElement) {
+      await document.documentElement.requestFullscreen();
+    } else {
+      await document.exitFullscreen();
+    }
+  } catch (err) {
+    setStatus(`Fullscreen error: ${err.message}`);
+  }
 }
 
 function setupAudioContext() {
@@ -676,7 +674,6 @@ function applyVisualDirection(dt, elapsed) {
   updateLaserIntersectionGlow();
   updateSparks(dt);
 
-  floor.material.emissiveIntensity = THREE.MathUtils.clamp(0.08 + audioState.smoothRms * 0.1, 0.07, 0.2);
   bloomPass.strength = THREE.MathUtils.clamp((0.32 + audioState.smoothRms * 0.3 + audioState.smoothHigh * 0.1) * config.bloomStrength, 0.2, 0.72);
   bloomPass.radius = THREE.MathUtils.lerp(0.16, 0.32, audioState.smoothRms + audioState.smoothMid * 0.2);
   bloomPass.threshold = THREE.MathUtils.lerp(0.62, 0.47, THREE.MathUtils.clamp(audioState.smoothHigh, 0, 1));
@@ -808,15 +805,7 @@ window.addEventListener('keydown', async (e) => {
   if (e.repeat) return;
 
   if (e.key === 'f' || e.key === 'F') {
-    try {
-      if (!document.fullscreenElement) {
-        await document.documentElement.requestFullscreen();
-      } else {
-        await document.exitFullscreen();
-      }
-    } catch (err) {
-      setStatus(`Fullscreen error: ${err.message}`);
-    }
+    await toggleFullscreen();
   }
 
   if (e.key === 'r' || e.key === 'R') {
@@ -835,6 +824,10 @@ window.addEventListener('keydown', async (e) => {
       }
     }
   }
+});
+
+ui.fullscreenBtn?.addEventListener('click', () => {
+  toggleFullscreen();
 });
 
 document.addEventListener('fullscreenchange', () => {
