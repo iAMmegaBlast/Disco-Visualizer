@@ -246,6 +246,34 @@ def analyze_audio(audio_path: str, fps: int, duration_limit: float | None) -> Di
     energy = 0.45 * bass + 0.35 * mids + 0.20 * highs
     d_energy = np.diff(np.r_[energy[0], energy])
 
+    # Structure analysis for lighting direction (not just raw amplitude reactivity).
+    long_energy = smooth_series(energy, 0.06)
+    long_rms = smooth_series(rms, 0.08)
+    slope = smooth_series(np.diff(np.r_[long_energy[0], long_energy]), 0.18)
+    rhythm = smooth_series(np.abs(np.diff(np.r_[mids[0], mids])), 0.22)
+
+    win = max(8, int(fps * 2.0))
+    kernel = np.ones(win, dtype=np.float32) / float(win)
+    rms_roll = np.convolve(rms, kernel, mode="same")
+    rms_agc = np.clip(rms / np.maximum(0.08, rms_roll), 0.0, 2.2)
+    rms_comp = smooth_series(rms_agc / (rms_agc + 0.85), 0.22)
+
+    build_score = np.clip((slope - 0.0018) / 0.015, 0.0, 1.0) * np.clip((onset_env - 0.18) / 0.8, 0.0, 1.0)
+    drop_score = np.clip((long_energy - 0.62) / 0.30, 0.0, 1.0) * np.clip((bass - 0.40) / 0.65, 0.0, 1.0)
+    groove_score = np.clip(1.0 - np.abs(slope) / 0.012, 0.0, 1.0) * np.clip((rhythm - 0.02) / 0.25, 0.0, 1.0)
+    calm_score = np.clip((0.52 - long_energy) / 0.52, 0.0, 1.0) * np.clip((0.48 - long_rms) / 0.48, 0.0, 1.0)
+
+    build_score = smooth_series(build_score, 0.20)
+    drop_score = smooth_series(drop_score, 0.18)
+    groove_score = smooth_series(groove_score, 0.20)
+    calm_score = smooth_series(calm_score, 0.22)
+
+    mode_sum = np.maximum(1e-5, calm_score + build_score + drop_score + groove_score)
+    mode_calm = calm_score / mode_sum
+    mode_build = build_score / mode_sum
+    mode_drop = drop_score / mode_sum
+    mode_groove = groove_score / mode_sum
+
     strobe = (onset_env > 0.66) & (d_energy > 0.03)
     drop_raw = (smooth_series(energy, 0.08) > np.percentile(energy, 78)) & (d_energy > 0.015)
 
@@ -258,6 +286,11 @@ def analyze_audio(audio_path: str, fps: int, duration_limit: float | None) -> Di
         "onset": onset_env,
         "strobe": strobe.astype(np.float32),
         "drop_raw": drop_raw.astype(np.float32),
+        "rms_comp": rms_comp,
+        "mode_calm": mode_calm,
+        "mode_build": mode_build,
+        "mode_drop": mode_drop,
+        "mode_groove": mode_groove,
         "frames": min_len,
         "duration": min_len / fps,
     }
@@ -328,6 +361,39 @@ class DiscoVisualizer:
         self.dynamic_magenta = self.cfg.palette_magenta
         self.dynamic_blue = self.cfg.palette_blue
 
+        self.state_mix = {
+            "calm": 1.0,
+            "build": 0.0,
+            "drop": 0.0,
+            "groove": 0.0,
+        }
+        self.energy_director = 0.35
+
+    def mode_at(self, idx: int) -> Dict[str, float]:
+        return {
+            "calm": self.feature_at(idx, "mode_calm"),
+            "build": self.feature_at(idx, "mode_build"),
+            "drop": self.feature_at(idx, "mode_drop"),
+            "groove": self.feature_at(idx, "mode_groove"),
+        }
+
+    def update_lighting_state(self, frame_i: int, dt: float) -> Dict[str, float]:
+        target = self.mode_at(frame_i)
+        blend = 1.0 - math.exp(-max(0.001, dt) / 0.85)
+        for k in self.state_mix:
+            self.state_mix[k] += (target[k] - self.state_mix[k]) * blend
+
+        s = sum(self.state_mix.values())
+        if s > 1e-6:
+            for k in self.state_mix:
+                self.state_mix[k] /= s
+
+        rms_comp = self.feature_at(frame_i, "rms_comp")
+        drop_bias = self.state_mix["drop"] * 0.20 + self.state_mix["build"] * 0.10
+        target_energy = np.clip(0.30 + 0.65 * rms_comp + drop_bias, 0.12, 0.95)
+        self.energy_director += (target_energy - self.energy_director) * blend
+        return self.state_mix
+
     def feature_at(self, idx: int, key: str) -> float:
         arr = self.f[key]
         if idx < 0:
@@ -336,14 +402,14 @@ class DiscoVisualizer:
             return float(arr[-1])
         return float(arr[idx])
 
-    def update_dynamic_palette(self, energy: float, drop_mul: float):
-        warm_w = max(0.05, 1.15 - energy)
-        mag_w = 0.35 + 0.75 * energy
-        blue_w = 0.18 + 0.52 * energy
+    def update_dynamic_palette(self, energy: float, drop_mul: float, mode: Dict[str, float]):
+        warm_w = max(0.05, 0.92 + 0.45 * mode["calm"] - 0.35 * mode["drop"] - 0.2 * mode["build"])
+        mag_w = 0.28 + 0.90 * mode["build"] + 0.75 * mode["drop"] + 0.25 * energy
+        blue_w = 0.16 + 0.70 * mode["drop"] + 0.35 * mode["groove"] + 0.18 * energy
         if drop_mul > 1.0:
-            mag_w += 0.65
-            blue_w += 0.65
-            warm_w *= 0.65
+            mag_w += 0.20
+            blue_w += 0.20
+            warm_w *= 0.90
 
         self.dynamic_warm = blend_color(self.cfg.palette_warm, self.cfg.palette_magenta, self.cfg.palette_blue, warm_w, mag_w * 0.25, blue_w * 0.1)
         self.dynamic_magenta = blend_color(self.cfg.palette_warm, self.cfg.palette_magenta, self.cfg.palette_blue, warm_w * 0.20, mag_w, blue_w * 0.40)
@@ -406,10 +472,11 @@ class DiscoVisualizer:
         self.tmp_surface.set_alpha(alpha)
         self.light_surface.blit(self.tmp_surface, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
 
-    def draw_rays(self, t: float, mids: float, highs: float, drop_mul: float, origin_norm: Tuple[float, float]):
+    def draw_rays(self, t: float, mids: float, highs: float, drop_mul: float, origin_norm: Tuple[float, float], mode: Dict[str, float]):
         origin = (int(origin_norm[0] * WIDTH), int(origin_norm[1] * HEIGHT))
-        base_rot = t * self.cfg.ray_rotation_speed * math.tau
-        ray_count = int(self.cfg.ray_count * (1.15 if drop_mul > 1.0 else 1.0))
+        speed_mul = 0.60 + mode["groove"] * 0.45 + mode["build"] * 0.40 + mode["drop"] * 0.30
+        base_rot = t * self.cfg.ray_rotation_speed * speed_mul * math.tau
+        ray_count = int(self.cfg.ray_count * (0.72 + mode["build"] * 0.2 + mode["drop"] * 0.35 + mode["groove"] * 0.1))
         glint_angle = (t * 1.3) % math.tau
 
         for i in range(ray_count):
@@ -421,13 +488,15 @@ class DiscoVisualizer:
             bright = (
                 self.cfg.ray_brightness
                 * self.cfg.intensity_master
-                * (0.2 + 0.7 * mids + 0.55 * highs)
+                * self.energy_director
+                * (0.15 + 0.65 * mids + 0.45 * highs)
                 * tile_mod
                 * shimmer
                 * glint
                 * drop_mul
             )
-            bright = min(bright, 1.18)
+            bright *= 0.62 + mode["drop"] * 0.68 + mode["build"] * 0.26 + mode["groove"] * 0.20
+            bright = min(bright, 0.98 + mode["drop"] * 0.22)
             if bright < 0.08:
                 continue
 
@@ -461,12 +530,16 @@ class DiscoVisualizer:
             py = int((0.58 + 0.08 * math.sin(t * 0.8 + i)) * HEIGHT)
             pygame.draw.line(self.light_surface, (*self.dynamic_magenta, int(35 + 55 * strength)), (px, py), (px + 60, py + 20), 2)
 
-    def draw_lasers(self, t: float, bass: float, drop_mul: float):
-        count = self.cfg.laser_count
-        sweep = t * self.cfg.laser_speed * math.tau
+    def draw_lasers(self, t: float, bass: float, drop_mul: float, mode: Dict[str, float]):
+        count = max(1, int(self.cfg.laser_count * (0.25 + mode["build"] * 0.6 + mode["drop"] * 1.0 + mode["groove"] * 0.35)))
+        sweep = t * self.cfg.laser_speed * (0.32 + mode["build"] * 0.5 + mode["drop"] * 0.95 + mode["groove"] * 0.4) * math.tau
         thickness = int(self.cfg.laser_thickness * (0.7 + bass * 1.2))
-        bright = self.cfg.laser_brightness * self.cfg.intensity_master * (0.25 + bass * 1.2) * drop_mul
-        bright = min(bright, 1.2)
+        bright = self.cfg.laser_brightness * self.cfg.intensity_master * (0.2 + bass * 0.95) * drop_mul
+        bright *= (mode["drop"] * 1.05 + mode["build"] * 0.55 + mode["groove"] * 0.45 + mode["calm"] * 0.15)
+        bright *= self.energy_director
+        bright = min(bright, 0.95)
+        if bright < 0.05:
+            return
 
         for i in range(count):
             phase = i * math.tau / max(1, count)
@@ -478,8 +551,9 @@ class DiscoVisualizer:
                 w = max(1, thickness - k * 6)
                 pygame.draw.line(self.light_surface, (*c, max(12, alpha // (k + 1))), (0, y1 + k), (WIDTH, y2 - k), w)
 
-    def draw_floor_pulse(self, bass: float, rms: float):
+    def draw_floor_pulse(self, bass: float, rms: float, mode: Dict[str, float]):
         s = (bass * 0.8 + rms * 0.6) * self.cfg.floor_pulse_strength * self.cfg.intensity_master
+        s *= (0.25 + mode["groove"] * 0.85 + mode["drop"] * 0.55 + mode["build"] * 0.35)
         if s < 0.03:
             return
 
@@ -500,8 +574,9 @@ class DiscoVisualizer:
             )
         self.light_surface.blit(ellipse, (center[0] - radius_x, center[1] - radius_y), special_flags=pygame.BLEND_RGBA_ADD)
 
-    def draw_floor_sweep(self, t: float, energy: float, bass: float):
+    def draw_floor_sweep(self, t: float, energy: float, bass: float, mode: Dict[str, float]):
         strength = self.cfg.floor_sweep_strength * self.cfg.intensity_master * (0.18 + 0.85 * energy + 0.6 * bass)
+        strength *= (0.35 + mode["groove"] * 0.55 + mode["drop"] * 0.35)
         if strength < 0.08:
             return
 
@@ -626,6 +701,8 @@ class DiscoVisualizer:
             f"Bloom {self.cfg.bloom_strength:.2f} thr:{self.cfg.bloom_threshold}",
             f"Floor {self.cfg.floor_pulse_strength:.2f} Strobe {self.cfg.strobe_strength:.2f}",
             f"Tonemap {'ON' if self.cfg.tonemap_enabled else 'OFF'} {self.cfg.tonemap_mode}",
+            f"Mode calm:{self.state_mix['calm']:.2f} build:{self.state_mix['build']:.2f} drop:{self.state_mix['drop']:.2f} groove:{self.state_mix['groove']:.2f}",
+            f"Director energy {self.energy_director:.2f}",
             f"Rays {self.cfg.ray_brightness:.2f}",
             f"Lasers {self.cfg.laser_brightness:.2f}",
             f"Sparkles {self.cfg.sparkle_density:.2f}",
@@ -683,8 +760,9 @@ class DiscoVisualizer:
         energy = np.clip(0.4 * bass + 0.4 * mids + 0.2 * highs, 0, 1.5)
 
         self.maybe_trigger_modes(frame_i, t)
-        drop_mul = 1.35 if t < self.drop_until else 1.0
-        self.update_dynamic_palette(energy, drop_mul)
+        mode = self.update_lighting_state(frame_i, dt)
+        drop_mul = 1.18 + mode["drop"] * 0.24 if t < self.drop_until else 0.92 + mode["drop"] * 0.22
+        self.update_dynamic_palette(energy, drop_mul, mode)
 
         # Realism upgrade: local origin wobble tied to highs. Base cfg origin stays unchanged.
         wobble_amp = 0.001 + 0.003 * highs
@@ -700,11 +778,11 @@ class DiscoVisualizer:
 
         self.light_surface.fill((0, 0, 0, 0))
         self.draw_haze(t, energy)
-        self.draw_rays(t, mids, highs, drop_mul, origin_norm)
+        self.draw_rays(t, mids, highs, drop_mul, origin_norm, mode)
         self.draw_gobo(t, mids)
-        self.draw_lasers(t, bass, drop_mul)
-        self.draw_floor_pulse(bass, rms)
-        self.draw_floor_sweep(t, energy, bass)
+        self.draw_lasers(t, bass, drop_mul, mode)
+        self.draw_floor_pulse(bass, rms, mode)
+        self.draw_floor_sweep(t, energy, bass, mode)
         self.draw_crowd_shimmer(t, mids, highs)
         self.draw_sparkles()
         self.draw_lens_effects(peak, origin_norm)
