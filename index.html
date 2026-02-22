@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Japanese Disco Lightshow Visualizer</title>
+    <style>
+      html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #07040d; font-family: Arial, sans-serif; }
+      #app { width: 100%; height: 100%; }
+
+      #dropZone {
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        pointer-events: auto;
+        background: rgba(8, 6, 16, 0.12);
+        transition: background 160ms ease;
+      }
+      #dropZone.visible {
+        display: flex;
+      }
+      #dropZone .panel {
+        border: 2px dashed rgba(255,255,255,0.65);
+        border-radius: 18px;
+        color: #ffeefe;
+        padding: 24px 34px;
+        font-size: 24px;
+        letter-spacing: 0.5px;
+        text-shadow: 0 2px 12px rgba(0,0,0,0.7);
+        background: rgba(30, 18, 44, 0.36);
+      }
+      #dropZone.active {
+        background: rgba(178, 98, 255, 0.28);
+      }
+      #dropZone.active .panel {
+        border-color: rgba(255,255,255,0.95);
+        box-shadow: 0 0 24px rgba(194, 114, 255, 0.5);
+      }
+
+      #ui {
+        position: fixed; top: 12px; left: 12px; z-index: 40;
+        width: 340px; max-height: calc(100vh - 24px); overflow: auto;
+        background: rgba(12, 10, 20, 0.78); color: #f7e9ff;
+        border: 1px solid rgba(255,255,255,0.15); border-radius: 12px;
+        padding: 12px; backdrop-filter: blur(8px);
+        transition: opacity 180ms ease;
+      }
+      #ui.uiHidden { opacity: 0; pointer-events: none; }
+      #ui h2 { margin: 0 0 8px 0; font-size: 16px; }
+      .row { margin-bottom: 8px; }
+      .row label { display: block; font-size: 12px; margin-bottom: 2px; }
+      input[type="range"] { width: 100%; }
+      button { margin: 2px 2px 2px 0; border: 0; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      .primary { background: #b94eff; color: white; }
+      .secondary { background: #2f2144; color: #efe4ff; }
+      .meter-wrap { display: grid; grid-template-columns: 38px 1fr; gap: 6px; align-items: center; margin-bottom: 4px; }
+      .meter { background: rgba(255,255,255,0.1); height: 8px; border-radius: 999px; overflow: hidden; }
+      .fill { height: 100%; width: 0%; transition: width 90ms linear; }
+      #stateText { font-size: 12px; opacity: 0.9; margin-top: 6px; }
+      #status { font-size: 12px; margin-top: 6px; color: #ffd68b; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="dropZone" aria-label="Audio drop zone">
+      <div class="panel">Drag &amp; Drop Music Here</div>
+      <input id="fileInput" type="file" accept="audio/*,.mp3,.wav,.ogg,.m4a" hidden />
+    </div>
+
+    <div id="ui">
+      <h2>Japanese Disco Lightshow Director</h2>
+
+      <div class="row">
+        <button id="playBtn" class="secondary" disabled>Play</button>
+        <button id="pauseBtn" class="secondary">Pause</button>
+        <button id="fullscreenBtn" class="secondary">Fullscreen (F)</button>
+      </div>
+
+      <div class="row">
+        <button id="recordStartBtn" class="primary">Start Recording</button>
+        <button id="recordStopBtn" class="secondary">Stop Recording</button>
+      </div>
+
+      <div class="row"><label>Master Intensity</label><input id="masterIntensity" type="range" min="0" max="2" step="0.01" value="1"/></div>
+      <div class="row"><label>Bloom Strength</label><input id="bloomStrength" type="range" min="0" max="2.5" step="0.01" value="1.2"/></div>
+      <div class="row"><label>Disco Energy</label><input id="discoEnergy" type="range" min="0" max="2" step="0.01" value="1"/></div>
+      <div class="row"><label>Laser Amount</label><input id="laserAmount" type="range" min="0" max="2" step="0.01" value="0.9"/></div>
+      <div class="row"><label>Intersection Glow</label><input id="spotBrightness" type="range" min="0" max="2" step="0.01" value="0.65"/></div>
+      <div class="row"><label>Dot Color Shift</label><input id="dotColorShift" type="range" min="-0.25" max="0.25" step="0.001" value="0"/></div>
+      <div class="row"><label>Laser Color Shift</label><input id="laserColorShift" type="range" min="-0.25" max="0.25" step="0.001" value="0"/></div>
+      <div class="row"><label>EXTREME (Elegant → Club)</label><input id="extreme" type="range" min="0" max="1" step="0.01" value="0.35"/></div>
+
+      <div class="row">
+        <label><input id="cinematicMode" type="checkbox" checked/> Cinematic Mode</label>
+        <label><input id="clubMode" type="checkbox"/> Club Mode</label>
+        <label><input id="showHud" type="checkbox" checked/> Show HUD</label>
+      </div>
+
+      <div id="hud">
+        <div class="meter-wrap"><span>Bass</span><div class="meter"><div id="bassMeter" class="fill" style="background:#ff9c33"></div></div></div>
+        <div class="meter-wrap"><span>Mid</span><div class="meter"><div id="midMeter" class="fill" style="background:#ff57cc"></div></div></div>
+        <div class="meter-wrap"><span>High</span><div class="meter"><div id="highMeter" class="fill" style="background:#62b2ff"></div></div></div>
+      </div>
+
+      <div id="stateText">State: INTRO</div>
+      <div id="status">Tip: Drag an audio file into the page, or click the drop zone after dragging once.</div>
+    </div>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
